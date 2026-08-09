@@ -1,0 +1,103 @@
+{
+  "projects": [
+    {
+      "id": "1786250247685",
+      "name": "leadsapce ",
+      "icon": "🚀",
+      "color": "#2563EB",
+      "priority": "critical",
+      "status": "active",
+      "description": "a billoard adverting plan ",
+      "progress": 100,
+      "goalsCount": 1,
+      "activeTasksCount": 0
+    }
+  ],
+  "goals": [
+    {
+      "id": "1786250282635",
+      "name": "get one sale ",
+      "projectId": "1786250247685",
+      "priority": "critical",
+      "deadline": "2026-08-20",
+      "description": "getting a sale ",
+      "progress": 100,
+      "tasksCount": 1,
+      "completionPct": 100
+    }
+  ],
+  "tasks": [
+    {
+      "id": "1786250322676",
+      "title": "call 20 leads ",
+      "estimatedTime": "2",
+      "priority": "high",
+      "status": "completed",
+      "xp": 200,
+      "projectId": "1786250247685",
+      "goalId": "1786250282635",
+      "project": "leadsapce ",
+      "goal": "get one sale "
+    }
+  ],
+  "rewards": [
+    {
+      "id": "r1",
+      "name": "Coffee Break",
+      "emoji": "☕",
+      "xpCost": 100,
+      "description": "A quick 15-minute coffee break.",
+      "category": "Rest",
+      "status": "redeemed",
+      "currentXp": 100
+    },
+    {
+      "id": "r2",
+      "name": "Movie Night",
+      "emoji": "🍿",
+      "xpCost": 500,
+      "description": "Watch a movie of your choice guilt-free.",
+      "category": "Entertainment",
+      "status": "locked",
+      "currentXp": 100
+    },
+    {
+      "id": "r3",
+      "name": "Pizza Feast",
+      "emoji": "🍕",
+      "xpCost": 800,
+      "description": "Cheat meal! Order a large pizza.",
+      "category": "Food",
+      "status": "locked",
+      "currentXp": 100
+    },
+    {
+      "id": "r4",
+      "name": "Day Off",
+      "emoji": "🏖️",
+      "xpCost": 2000,
+      "description": "A full day of rest and recovery.",
+      "category": "Rest",
+      "status": "locked",
+      "currentXp": 100
+    }
+  ],
+  "userXp": 100,
+  "streak": 0,
+  "dailyPlan": {
+    "morning": [
+      "1786250322676"
+    ],
+    "afternoon": [],
+    "evening": []
+  },
+  "weeklyPlan": {
+    "0": [],
+    "1": [],
+    "2": [],
+    "3": [],
+    "4": [],
+    "5": [],
+    "6": []
+  }
+}
