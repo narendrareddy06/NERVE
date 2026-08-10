@@ -42,6 +42,8 @@ export interface Task {
   goal?: string
   scheduledDate?: string
   scheduledBlock?: 'morning' | 'afternoon' | 'evening'
+  actualTime?: number
+  dependsOnTaskId?: string
 }
 
 export interface Reward {

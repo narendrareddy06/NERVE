@@ -8,8 +8,6 @@ import { useNerveStore } from "@/lib/nerve-store"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 
-const TOTAL_SECONDS = 25 * 60 // 25 minutes
-
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
@@ -17,22 +15,86 @@ function formatTime(seconds: number) {
 }
 
 export default function FocusPage() {
-  const { tasks, toggleTaskComplete } = useNerveStore()
-  const focusTask = tasks.find((t) => t.status === "in-progress") ?? tasks[0] ?? {
-    id: "default",
-    title: "Start a Task",
-    estimatedTime: "25m",
-    xp: 50,
-    project: "Nerve",
-    status: "todo",
-  }
+  const { tasks, toggleTaskComplete, updateTask } = useNerveStore()
+  const focusTask = tasks.find((t) => t.status === "in-progress")
 
-  const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS)
+  const [selectedPreset, setSelectedPreset] = useState<'25m' | '45m' | '60m' | '90m' | 'custom'>('25m')
+  const [customMinutes, setCustomMinutes] = useState('25')
+  const [totalSeconds, setTotalSeconds] = useState(25 * 60)
+  const [secondsLeft, setSecondsLeft] = useState(25 * 60)
   const [running, setRunning] = useState(false)
   const [completed, setCompleted] = useState(false)
+  const [sessionSecondsWorked, setSessionSecondsWorked] = useState(0)
   const [quoteIndex] = useState(() => Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length))
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  const getSessionSeconds = (p: string, customMin: string) => {
+    if (p === 'custom') {
+      const m = parseFloat(customMin)
+      return isNaN(m) || m <= 0 ? 25 * 60 : Math.round(m * 60)
+    }
+    if (p === '45m') return 45 * 60
+    if (p === '60m') return 60 * 60
+    if (p === '90m') return 90 * 60
+    return 25 * 60
+  }
+
+  const handlePresetChange = (p: typeof selectedPreset) => {
+    if (running) return
+    setSelectedPreset(p)
+    const secs = getSessionSeconds(p, customMinutes)
+    setTotalSeconds(secs)
+    setSecondsLeft(secs)
+  }
+
+  const handleCustomMinutesChange = (val: string) => {
+    if (running) return
+    setCustomMinutes(val)
+    const secs = getSessionSeconds('custom', val)
+    setTotalSeconds(secs)
+    setSecondsLeft(secs)
+  }
+
+  const saveElapsedTimeToTask = (seconds: number) => {
+    if (seconds <= 0 || !focusTask) return
+    const currentTask = tasks.find((t) => t.id === focusTask.id)
+    if (!currentTask) return
+
+    const newActualTime = (currentTask.actualTime ?? 0) + seconds
+    updateTask({
+      ...currentTask,
+      actualTime: newActualTime,
+    })
+  }
+
+  // Ref sync for unmount cleanup
+  const focusTaskRef = useRef(focusTask)
+  const tasksRef = useRef(tasks)
+  const updateTaskRef = useRef(updateTask)
+  const sessionSecondsWorkedRef = useRef(0)
+
+  useEffect(() => { focusTaskRef.current = focusTask }, [focusTask])
+  useEffect(() => { tasksRef.current = tasks }, [tasks])
+  useEffect(() => { updateTaskRef.current = updateTask }, [updateTask])
+  useEffect(() => { sessionSecondsWorkedRef.current = sessionSecondsWorked }, [sessionSecondsWorked])
+
+  // Unmount cleanup to save any unsaved seconds
+  useEffect(() => {
+    return () => {
+      const currentFocusTask = focusTaskRef.current
+      if (sessionSecondsWorkedRef.current > 0 && currentFocusTask && updateTaskRef.current && tasksRef.current) {
+        const currentTask = tasksRef.current.find((t) => t.id === currentFocusTask.id)
+        if (currentTask) {
+          updateTaskRef.current({
+            ...currentTask,
+            actualTime: (currentTask.actualTime ?? 0) + sessionSecondsWorkedRef.current,
+          })
+        }
+      }
+    }
+  }, [])
+
+  // Timer Tick Interval
   useEffect(() => {
     if (running && secondsLeft > 0) {
       intervalRef.current = setInterval(() => {
@@ -43,8 +105,10 @@ export default function FocusPage() {
               intervalRef.current = null
             }
             setRunning(false)
+            setSessionSecondsWorked((w) => w + 1)
             return 0
           }
+          setSessionSecondsWorked((w) => w + 1)
           return s - 1
         })
       }, 1000)
@@ -55,15 +119,36 @@ export default function FocusPage() {
         intervalRef.current = null
       }
     }
-  }, [running])
+  }, [running, secondsLeft])
 
-  const progress = ((TOTAL_SECONDS - secondsLeft) / TOTAL_SECONDS) * 100
+  // Save progress when paused
+  useEffect(() => {
+    if (!running && sessionSecondsWorked > 0) {
+      saveElapsedTimeToTask(sessionSecondsWorked)
+      setSessionSecondsWorked(0)
+    }
+  }, [running, sessionSecondsWorked])
+
+  const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
   const circumference = 2 * Math.PI * 140
 
   const handleComplete = () => {
     setRunning(false)
     if (intervalRef.current) clearInterval(intervalRef.current)
-    if (focusTask.id !== "default" && focusTask.status !== "completed") {
+
+    // Save pending progress
+    if (sessionSecondsWorked > 0 && focusTask) {
+      const currentTask = tasks.find((t) => t.id === focusTask.id)
+      if (currentTask) {
+        updateTask({
+          ...currentTask,
+          actualTime: (currentTask.actualTime ?? 0) + sessionSecondsWorked,
+        })
+      }
+      setSessionSecondsWorked(0)
+    }
+
+    if (focusTask && focusTask.status !== "completed") {
       toggleTaskComplete(focusTask.id)
     }
     setCompleted(true)
@@ -72,8 +157,99 @@ export default function FocusPage() {
   const handleReset = () => {
     setRunning(false)
     if (intervalRef.current) clearInterval(intervalRef.current)
-    setSecondsLeft(TOTAL_SECONDS)
+    setSecondsLeft(totalSeconds)
     setCompleted(false)
+  }
+
+  const handleSwitchTask = () => {
+    setRunning(false)
+    if (intervalRef.current) clearInterval(intervalRef.current)
+
+    // Save pending progress
+    if (sessionSecondsWorked > 0 && focusTask) {
+      const currentTask = tasks.find((t) => t.id === focusTask.id)
+      if (currentTask) {
+        updateTask({
+          ...currentTask,
+          actualTime: (currentTask.actualTime ?? 0) + sessionSecondsWorked,
+        })
+      }
+      setSessionSecondsWorked(0)
+    }
+
+    if (focusTask) {
+      updateTask({
+        ...focusTask,
+        status: "todo",
+      })
+    }
+  }
+
+  // Render Selection Screen if no task is in-progress
+  if (!focusTask) {
+    const activeTasks = tasks.filter((t) => t.status !== "completed")
+
+    return (
+      <div className="fixed inset-0 focus-bg flex flex-col z-30 overflow-y-auto">
+        {/* Top bar */}
+        <div className="flex items-center justify-between p-6">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-[#3B82F6]" />
+            <span className="text-xs font-bold tracking-widest text-white/60 uppercase">NERVE FOCUS</span>
+          </div>
+          <Link href="/">
+            <button className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/[0.08] flex items-center justify-center text-[#71717A] hover:text-white hover:bg-white/[0.1] transition-all">
+              <X className="w-4 h-4" />
+            </button>
+          </Link>
+        </div>
+
+        {/* Main Selection Area */}
+        <div className="flex-1 flex flex-col items-center justify-center max-w-lg mx-auto w-full px-6 py-12">
+          <h2 className="text-2xl font-bold text-white mb-2 text-center">Select a Task to Focus On</h2>
+          <p className="text-sm text-[#71717A] text-center mb-8">Choose an active mission from your planner to start deep focus tracking.</p>
+
+          {activeTasks.length === 0 ? (
+            <div className="text-center py-12 bg-white/[0.02] border border-white/[0.06] rounded-2xl w-full p-6">
+              <Clock className="w-8 h-8 text-[#71717A] mx-auto mb-3" />
+              <p className="text-sm font-bold text-white mb-1">No active tasks</p>
+              <p className="text-xs text-[#71717A] mb-4">You have completed all your tasks or haven't created any yet.</p>
+              <Link href="/tasks">
+                <Button className="nerve-gradient-blue text-white border-0 rounded-xl font-semibold hover:opacity-90">
+                  Go to Tasks
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-3 w-full max-h-[400px] overflow-y-auto pr-1">
+              {activeTasks.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-center justify-between p-4 bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.06] hover:border-white/[0.12] rounded-2xl transition-all"
+                >
+                  <div className="min-w-0 flex-1 pr-4">
+                    <p className="text-sm font-semibold text-white truncate">{t.title}</p>
+                    <div className="flex items-center gap-2 mt-1 text-[10px] text-[#71717A]">
+                      <span className="text-blue-400 font-semibold">{t.project}</span>
+                      <span>·</span>
+                      <span>{t.estimatedTime}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      updateTask({ ...t, status: "in-progress" })
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold rounded-xl border-0 cursor-pointer transition-all"
+                  >
+                    <Play className="w-3 h-3 fill-white" /> Start
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
   }
 
   if (completed) {
@@ -144,6 +320,46 @@ export default function FocusPage() {
             <span className="text-white/20">·</span>
             <span>{focusTask.project}</span>
           </div>
+          <div className="flex items-center justify-center gap-3 mt-3.5">
+            <button
+              onClick={handleSwitchTask}
+              className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold rounded-xl border border-white/10 cursor-pointer transition-all"
+            >
+              Switch Task
+            </button>
+          </div>
+        </div>
+
+        {/* Configurable presets */}
+        <div className="flex items-center justify-center gap-2 bg-white/[0.03] border border-white/[0.06] rounded-2xl p-1.5 shrink-0 max-w-md w-full">
+          {(["25m", "45m", "60m", "90m", "custom"] as const).map((p) => (
+            <button
+              key={p}
+              disabled={running}
+              onClick={() => handlePresetChange(p)}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition-all border cursor-pointer",
+                running && "opacity-45 cursor-not-allowed",
+                selectedPreset === p
+                  ? "border-[#3B82F6]/30 bg-[#3B82F6]/10 text-white"
+                  : "border-transparent text-[#71717A] hover:text-white"
+              )}
+            >
+              {p === "custom" ? "Custom" : p}
+            </button>
+          ))}
+          {selectedPreset === "custom" && (
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={customMinutes}
+              disabled={running}
+              onChange={(e) => handleCustomMinutesChange(e.target.value)}
+              className="w-14 bg-white/[0.05] border border-white/[0.1] rounded-lg text-center py-1 text-xs font-bold text-white focus:border-[#3B82F6]/50 outline-none placeholder:text-white/20"
+              placeholder="Min"
+            />
+          )}
         </div>
 
         {/* Timer ring */}
@@ -200,7 +416,7 @@ export default function FocusPage() {
               {formatTime(secondsLeft)}
             </p>
             <p className="text-xs text-[#71717A] mt-2 uppercase tracking-widest">
-              {running ? "Deep Focus" : secondsLeft === TOTAL_SECONDS ? "Ready" : "Paused"}
+              {running ? "Deep Focus" : secondsLeft === totalSeconds ? "Ready" : "Paused"}
             </p>
           </div>
         </div>

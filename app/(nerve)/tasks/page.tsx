@@ -16,6 +16,42 @@ const STATUS_FILTERS = [
   { label: "Completed", value: "completed" },
 ]
 
+function formatActualTime(seconds?: number) {
+  if (!seconds || seconds <= 0) return "0m"
+  const mins = Math.round(seconds / 60)
+  if (mins === 0) return "< 1m"
+  if (mins < 60) return `${mins}m`
+  const hrs = (mins / 60).toFixed(1)
+  return `${hrs}h`
+}
+
+function wouldCreateCircularDependency(
+  taskId: string | undefined,
+  potentialDependsOnId: string,
+  tasks: Task[]
+): boolean {
+  if (!taskId) return false
+  if (taskId === potentialDependsOnId) return true
+
+  // DFS to check if potentialDependsOnId transitively depends on taskId
+  const visited = new Set<string>()
+  const queue: string[] = [potentialDependsOnId]
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!
+    if (currentId === taskId) return true
+    if (visited.has(currentId)) continue
+    visited.add(currentId)
+
+    const currentTask = tasks.find((t) => t.id === currentId)
+    if (currentTask && currentTask.dependsOnTaskId) {
+      queue.push(currentTask.dependsOnTaskId)
+    }
+  }
+
+  return false
+}
+
 function TaskModal({
   task,
   projects,
@@ -29,6 +65,7 @@ function TaskModal({
   onClose: () => void
   onSave: (t: Task) => void
 }) {
+  const { tasks } = useNerveStore()
   const [title, setTitle] = useState(task?.title ?? "")
   const [estimatedTime, setEstimatedTime] = useState(task?.estimatedTime ?? "")
   const [priority, setPriority] = useState<Priority>(task?.priority ?? "medium")
@@ -37,10 +74,21 @@ function TaskModal({
   const [projectId, setProjectId] = useState(task?.projectId ?? (projects[0]?.id ?? ""))
   const [goalId, setGoalId] = useState(task?.goalId ?? "")
   const [notes, setNotes] = useState(task?.notes ?? "")
+  const [dependsOnTaskId, setDependsOnTaskId] = useState(task?.dependsOnTaskId ?? "")
 
   const selectedProject = projects.find((p) => p.id === projectId)
   const projectGoals = goals.filter((g) => g.projectId === projectId)
   const selectedGoal = projectGoals.find((g) => g.id === goalId)
+
+  const eligiblePrerequisites = tasks.filter((t) => {
+    if (goalId) {
+      if (t.goalId !== goalId) return false
+    } else {
+      if (t.projectId !== projectId) return false
+    }
+    if (task?.id && t.id === task.id) return false
+    return !wouldCreateCircularDependency(task?.id, t.id, tasks)
+  })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -137,6 +185,21 @@ function TaskModal({
             </select>
           </div>
           <div>
+            <label className="text-xs font-medium text-[#64748B] uppercase tracking-wider mb-2 block">Prerequisite Task (optional)</label>
+            <select
+              value={dependsOnTaskId}
+              onChange={(e) => setDependsOnTaskId(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] outline-none focus:border-[#2563EB]/50"
+            >
+              <option value="">No Prerequisite (Unblocked)</option>
+              {eligiblePrerequisites.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title} ({t.project})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="text-xs font-medium text-[#64748B] uppercase tracking-wider mb-2 block">Notes (optional)</label>
             <textarea
               value={notes}
@@ -165,6 +228,8 @@ function TaskModal({
                 project: selectedProject?.name ?? "",
                 goal: selectedGoal?.name ?? undefined,
                 notes: notes || undefined,
+                dependsOnTaskId: dependsOnTaskId || undefined,
+                actualTime: task?.actualTime ?? 0,
               })
             }
             className="flex-1 nerve-gradient-blue text-white border-0 rounded-xl font-semibold hover:opacity-90"
@@ -291,6 +356,26 @@ export default function TasksPage() {
                           🎯 Goal: {task.goal}
                         </p>
                       )}
+                      {task.dependsOnTaskId && (
+                        (() => {
+                          const prereq = tasks.find((t) => t.id === task.dependsOnTaskId)
+                          if (!prereq) return null
+                          const isPrereqCompleted = prereq.status === "completed"
+                          return (
+                            <div className="mt-1">
+                              {isPrereqCompleted ? (
+                                <span className="text-[10px] text-[#10B981] font-semibold bg-[#10B981]/5 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                  🔓 Prerequisite completed: {prereq.title}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[#EF4444] font-semibold bg-[#EF4444]/5 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                  🔒 Depends on: {prereq.title}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })()
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <StatusBadge status={task.status} />
@@ -325,7 +410,11 @@ export default function TasksPage() {
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1.5 mt-2.5">
                     <div className="flex items-center gap-1 text-xs text-[#64748B]">
                       <Clock className="w-3 h-3" />
-                      {task.estimatedTime}
+                      {isCompleted ? (
+                        <span>Est: {task.estimatedTime} · Act: {formatActualTime(task.actualTime)}</span>
+                      ) : (
+                        <span>{task.estimatedTime}</span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 text-xs text-[#8B5CF6] font-semibold">
                       <Zap className="w-3 h-3" />
@@ -347,7 +436,7 @@ export default function TasksPage() {
                 {/* Quick actions */}
                 {!isCompleted && (
                   <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
-                    <Link href="/focus">
+                    <Link href="/focus" onClick={() => quickStart(task.id)}>
                       <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20 text-xs font-medium hover:bg-[#2563EB]/20 transition-all">
                         <PlayCircle className="w-3.5 h-3.5" /> Focus
                       </button>

@@ -75,6 +75,19 @@ export default function SettingsPage() {
     defaultFocusLength: 25,
     breakLength: 5,
   })
+  const [dailyCapacities, setDailyCapacities] = useState<Record<string, number>>(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("nerve_daily_capacities")
+      if (stored) {
+        try {
+          return JSON.parse(stored)
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+    return { "Mon": 5, "Tue": 5, "Wed": 5, "Thu": 5, "Fri": 5, "Sat": 5, "Sun": 5 }
+  })
 
   const renderSection = () => {
     switch (activeSection) {
@@ -288,6 +301,31 @@ export default function SettingsPage() {
                   onChange={(e) => setPlannerPrefs((p) => ({ ...p, breakLength: Number(e.target.value) }))}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] outline-none focus:border-[#2563EB]/50"
                 />
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 pt-5 mt-5">
+              <label className="text-xs font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Daily Work Capacity (Hours)</label>
+              <p className="text-[11px] text-[#64748B] mb-4">Set maximum available hours for the AI planner to schedule each day.</p>
+              <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+                  <div key={day} className="flex flex-col items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                    <span className="text-[11px] font-bold text-[#0F172A]">{day}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={24}
+                      value={dailyCapacities[day] ?? 5}
+                      onChange={(e) => {
+                        const val = Math.max(0, Math.min(24, Number(e.target.value)))
+                        const next = { ...dailyCapacities, [day]: val }
+                        setDailyCapacities(next)
+                        localStorage.setItem("nerve_daily_capacities", JSON.stringify(next))
+                      }}
+                      className="w-full bg-white border border-slate-200 rounded-lg text-center py-1 text-xs font-semibold text-[#0F172A] focus:border-[#2563EB]/50 outline-none"
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           </div>

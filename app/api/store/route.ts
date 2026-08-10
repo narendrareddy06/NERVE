@@ -77,6 +77,8 @@ export async function GET(request: Request) {
       notes: t.notes,
       scheduledDate: t.scheduled_date || undefined,
       scheduledBlock: t.scheduled_block || undefined,
+      actualTime: t.actual_time || 0,
+      dependsOnTaskId: t.depends_on_task_id || undefined,
     }))
 
     // 5. Load Rewards
@@ -163,6 +165,8 @@ export async function POST(request: Request) {
       notes: t.notes || "",
       scheduled_date: t.scheduledDate || null,
       scheduled_block: t.scheduled_block || null,
+      actual_time: t.actualTime || 0,
+      depends_on_task_id: t.dependsOnTaskId || null,
     }))
 
     // 5. Sync rewards

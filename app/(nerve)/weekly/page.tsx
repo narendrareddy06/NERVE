@@ -51,6 +51,19 @@ function parseEstimatedMinutes(timeStr?: string): number {
   return isNaN(parsed) ? 60 : parsed * 60
 }
 
+function getTaskDepth(taskId: string, tasksList: Task[], memo: Map<string, number>): number {
+  if (memo.has(taskId)) return memo.get(taskId)!
+  const task = tasksList.find((t) => t.id === taskId)
+  if (!task || !task.dependsOnTaskId || task.status === "completed") {
+    memo.set(taskId, 0)
+    return 0
+  }
+  const prereqDepth = getTaskDepth(task.dependsOnTaskId, tasksList, memo)
+  const depth = 1 + prereqDepth
+  memo.set(taskId, depth)
+  return depth
+}
+
 export default function WeeklyPlannerPage() {
   const today = new Date()
   const { tasks, projects, goals, updateTask, updateTasks, toggleTaskComplete } = useNerveStore()
@@ -141,6 +154,7 @@ export default function WeeklyPlannerPage() {
     const goalMap = new Map(goals.map((g) => [g.id, g]))
 
     // 3. Heuristic scoring for each task
+    const memo = new Map<string, number>()
     const scoredTasks = activeUnscheduled.map((task) => {
       let score = 0
 
@@ -174,35 +188,78 @@ export default function WeeklyPlannerPage() {
       }
 
       const duration = parseEstimatedMinutes(task.estimatedTime)
+      const depth = getTaskDepth(task.id, tasks, memo)
 
-      return { task, score, duration }
+      return { task, score, duration, depth }
     })
 
-    // Sort tasks by score in descending order
-    scoredTasks.sort((a, b) => b.score - a.score)
+    // Sort tasks by depth (ascending, prerequisites first) then score (descending)
+    scoredTasks.sort((a, b) => {
+      if (a.depth !== b.depth) return a.depth - b.depth
+      return b.score - a.score
+    })
 
     // 4. Distribute tasks across week days
     let updatedTasks = [...tasks]
 
-    // Create tracking structure for day workloads
-    const dayWorkloads = [...Array(7)].map((_, i) => ({
-      index: i,
-      dateKey: formatDateKey(weekDates[i]),
-      minutes: 0,
-      taskCount: 0,
-    }))
+    // Load capacities from local storage
+    let dailyCapacities: Record<string, number> = { "Mon": 5, "Tue": 5, "Wed": 5, "Thu": 5, "Fri": 5, "Sat": 5, "Sun": 5 }
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("nerve_daily_capacities")
+      if (stored) {
+        try {
+          dailyCapacities = JSON.parse(stored)
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
 
-    // Max daily workload limits to ensure no overloading
-    const MAX_MINUTES_PER_DAY = 300 // 5 hours
+    // Create tracking structure for day workloads
+    const dayWorkloads = [...Array(7)].map((_, i) => {
+      const dayName = DAYS[i]
+      const capacityHours = dailyCapacities[dayName] ?? 5
+      return {
+        index: i,
+        dayName,
+        dateKey: formatDateKey(weekDates[i]),
+        minutes: 0,
+        taskCount: 0,
+        maxMinutes: capacityHours * 60,
+      }
+    })
+
     const MAX_TASKS_PER_DAY = 4
 
     scoredTasks.forEach(({ task, duration }) => {
+      let earliestDayIdx = 0
+      if (task.dependsOnTaskId) {
+        const prereqTask = updatedTasks.find((t) => t.id === task.dependsOnTaskId)
+        if (prereqTask) {
+          if (prereqTask.status !== "completed") {
+            if (prereqTask.scheduledDate) {
+              const prereqDayIdx = weekDates.findIndex((d) => formatDateKey(d) === prereqTask.scheduledDate)
+              if (prereqDayIdx !== -1) {
+                earliestDayIdx = prereqDayIdx + 1
+              } else {
+                earliestDayIdx = Infinity // Scheduled in future or past week (rolled over)
+              }
+            } else {
+              earliestDayIdx = Infinity // Prerequisite is unscheduled
+            }
+          }
+        }
+      }
+
+      if (earliestDayIdx >= dayWorkloads.length) return // Blocked this week
+
       let bestDay = null
       let minMinutes = Infinity
 
-      for (const day of dayWorkloads) {
+      for (let i = earliestDayIdx; i < dayWorkloads.length; i++) {
+        const day = dayWorkloads[i]
         const fitsTasks = day.taskCount < MAX_TASKS_PER_DAY
-        const fitsMinutes = day.minutes === 0 || (day.minutes + duration <= MAX_MINUTES_PER_DAY)
+        const fitsMinutes = day.minutes + duration <= day.maxMinutes
 
         if (fitsTasks && fitsMinutes) {
           if (day.minutes < minMinutes) {
