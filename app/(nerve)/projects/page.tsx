@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Plus, MoreHorizontal, Archive, Pencil, Trash2, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProgressBar, PriorityBadge, StatusBadge, SectionHeader, EmptyState } from "@/components/nerve/ui"
@@ -153,6 +154,7 @@ function ProjectModal({
 }
 
 export default function ProjectsPage() {
+  const router = useRouter()
   const { projects, updateProject, deleteProject } = useNerveStore()
   const [filter, setFilter] = useState("all")
   const [showModal, setShowModal] = useState(false)
@@ -229,7 +231,8 @@ export default function ProjectsPage() {
           {filtered.map((project) => (
             <div
               key={project.id}
-              className="bg-[#FFFFFF] border border-slate-200 rounded-2xl p-5 card-hover group relative"
+              className="bg-[#FFFFFF] border border-slate-200 rounded-2xl p-5 card-hover group relative cursor-pointer"
+              onClick={() => router.push(`/projects/${project.id}`)}
             >
               {/* Header */}
               <div className="flex items-start justify-between mb-4">
@@ -245,7 +248,7 @@ export default function ProjectsPage() {
                     <StatusBadge status={project.status} />
                   </div>
                 </div>
-                <div className="relative">
+                <div className="relative" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => setMenuOpen(menuOpen === project.id ? null : project.id)}
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100 transition-all"

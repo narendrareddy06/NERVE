@@ -118,28 +118,65 @@ function validateAssignments(
   const aiTaskIds = new Set(rawAssignments.map((a) => a.taskId))
 
   // Pre-seed dayStats with tasks already scheduled on those days
-  // (but NOT the ones the AI is trying to reschedule)
   for (const task of tasks) {
     if (!task.scheduledDate) continue
-    if (aiTaskIds.has(task.id)) continue // AI will reassign this one — skip
+    if (aiTaskIds.has(task.id)) continue
     const dayIdx = weekDates.indexOf(task.scheduledDate)
     if (dayIdx === -1) continue
     dayStats[dayIdx].minutes += parseMinutes(task.estimatedTime)
     dayStats[dayIdx].taskCount += 1
   }
 
+  // Log the seeded state for diagnostics
+  console.log("[ai-plan] Day stats after pre-seeding:", dayStats.map(d =>
+    `${d.label}: ${d.taskCount} tasks, ${Math.round(d.minutes/60*10)/10}h / ${d.maxMinutes/60}h`
+  ).join(" | "))
+  console.log("[ai-plan] AI raw assignments:", JSON.stringify(rawAssignments))
+
   const validated = new Map<string, string>()
 
-  // Process in the order the AI gave us (it should have ordered by depth)
+  /** Find the best available day for a task of `duration` minutes, starting from `startIdx` */
+  function findBestDay(duration: number, startIdx = 0): number {
+    // First pass: strict (task count + time)
+    let bestIdx = -1
+    let leastLoaded = Infinity
+    for (let i = startIdx; i < dayStats.length; i++) {
+      const d = dayStats[i]
+      if (d.taskCount >= MAX_TASKS_PER_DAY) continue
+      if (d.minutes + duration > d.maxMinutes) continue
+      if (d.minutes < leastLoaded) { leastLoaded = d.minutes; bestIdx = i }
+    }
+    if (bestIdx !== -1) return bestIdx
+
+    // Second pass: relaxed (task count only — ignore time cap)
+    leastLoaded = Infinity
+    for (let i = startIdx; i < dayStats.length; i++) {
+      const d = dayStats[i]
+      if (d.taskCount >= MAX_TASKS_PER_DAY) continue
+      if (d.minutes < leastLoaded) { leastLoaded = d.minutes; bestIdx = i }
+    }
+    return bestIdx // -1 if truly no slot available anywhere
+  }
+
   for (const { taskId, dateKey } of rawAssignments) {
     const task = tasks.find((t) => t.id === taskId)
-    if (!task) continue
-
-    const dayIdx = weekDates.indexOf(dateKey)
-    if (dayIdx === -1) continue // unknown date — skip
+    if (!task) {
+      console.log(`[ai-plan] Task ${taskId} not found in task list — skipping`)
+      continue
+    }
 
     const duration = parseMinutes(task.estimatedTime)
-    const day = dayStats[dayIdx]
+
+    // Resolve AI's chosen day index — snap to week if AI chose an out-of-week date
+    let dayIdx = weekDates.indexOf(dateKey)
+    if (dayIdx === -1) {
+      console.log(`[ai-plan] AI chose out-of-week date ${dateKey} for "${task.title}" — finding best slot`)
+      dayIdx = findBestDay(duration, 0)
+      if (dayIdx === -1) {
+        console.log(`[ai-plan] No slot available for "${task.title}" — skipping`)
+        continue
+      }
+    }
 
     // --- Dependency constraint ---
     if (task.dependsOnTaskId) {
@@ -147,31 +184,35 @@ function validateAssignments(
       if (prereq && prereq.status !== "completed") {
         const prereqDayIdx = getTaskDayIndex(task.dependsOnTaskId, validated, weekDates)
         if (prereqDayIdx === -1) {
-          // Prereq not scheduled yet → skip this task too
+          console.log(`[ai-plan] Prereq for "${task.title}" not yet scheduled — skipping`)
           continue
         }
         if (dayIdx <= prereqDayIdx) {
-          // Must come after prereq — push to next day if possible
-          const nextIdx = prereqDayIdx + 1
-          if (nextIdx >= weekDates.length) continue
-          const nextDay = dayStats[nextIdx]
-          if (nextDay.taskCount >= MAX_TASKS_PER_DAY) continue
-          if (nextDay.minutes + duration > nextDay.maxMinutes) continue
-          nextDay.minutes += duration
-          nextDay.taskCount++
-          validated.set(taskId, weekDates[nextIdx])
-          continue
+          // Push after prereq
+          dayIdx = findBestDay(duration, prereqDayIdx + 1)
+          if (dayIdx === -1) {
+            console.log(`[ai-plan] No slot after prereq for "${task.title}" — skipping`)
+            continue
+          }
         }
       }
     }
 
-    // --- Capacity constraints ---
-    if (day.taskCount >= MAX_TASKS_PER_DAY) continue
-    if (day.minutes + duration > day.maxMinutes) continue
+    // --- Capacity check: try AI's chosen day; if full, find a better one ---
+    const chosenDay = dayStats[dayIdx]
+    if (chosenDay.taskCount >= MAX_TASKS_PER_DAY || chosenDay.minutes + duration > chosenDay.maxMinutes) {
+      const altIdx = findBestDay(duration, 0)
+      if (altIdx === -1) {
+        console.log(`[ai-plan] No available slot for "${task.title}" after relaxed search — skipping`)
+        continue
+      }
+      dayIdx = altIdx
+    }
 
-    day.minutes += duration
-    day.taskCount++
-    validated.set(taskId, dateKey)
+    dayStats[dayIdx].minutes += duration
+    dayStats[dayIdx].taskCount++
+    validated.set(taskId, weekDates[dayIdx])
+    console.log(`[ai-plan] ✓ Scheduled "${task.title}" → ${weekDates[dayIdx]}`)
   }
 
   return validated

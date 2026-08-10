@@ -7,6 +7,7 @@ import {
   type Goal,
   type Task,
   type Reward,
+  type Milestone,
 } from "./nerve-data"
 
 interface NerveStoreContextType {
@@ -14,6 +15,7 @@ interface NerveStoreContextType {
   goals: Goal[]
   tasks: Task[]
   rewards: Reward[]
+  milestones: Milestone[]
   userXp: number
   streak: number
   dailyPlan: Record<string, string[]>
@@ -21,6 +23,8 @@ interface NerveStoreContextType {
   userId: string | null
   username: string | null
   displayName: string | null
+  pendingMilestone: Milestone | null
+  clearPendingMilestone: () => void
   toggleTaskComplete: (taskId: string) => void
   updateTask: (task: Task) => void
   updateTasks: (newTasks: Task[]) => void
@@ -32,6 +36,8 @@ interface NerveStoreContextType {
   updateReward: (reward: Reward) => void
   deleteReward: (rewardId: string) => void
   redeemReward: (rewardId: string) => void
+  updateMilestone: (milestone: Milestone) => void
+  deleteMilestone: (milestoneId: string) => void
   setDailyPlan: (plan: Record<string, string[]>) => void
   setWeeklyPlan: (plan: Record<number, string[]>) => void
   logout: () => void
@@ -58,6 +64,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   const [goals, setGoals] = useState<Goal[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [rewards, setRewards] = useState<Reward[]>([])
+  const [milestones, setMilestones] = useState<Milestone[]>([])
+  const [pendingMilestone, setPendingMilestone] = useState<Milestone | null>(null)
   const [userXp, setUserXp] = useState(0)
   const [streak, setStreak] = useState(0)
 
@@ -134,6 +142,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           setGoals(data.goals ?? [])
           setTasks(rolledTasks)
           setRewards(data.rewards ?? [])
+          setMilestones(data.milestones ?? [])
           setUserXp(data.userXp ?? 0)
           setStreak(data.streak ?? 0)
 
@@ -201,7 +210,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     nextTasks: Task[],
     nextRewards: Reward[],
     nextXp: number,
-    nextStreak: number
+    nextStreak: number,
+    nextMilestones?: Milestone[]
   ) => {
     if (!userId) return
     try {
@@ -213,6 +223,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           goals: nextGoals,
           tasks: nextTasks,
           rewards: nextRewards,
+          milestones: nextMilestones ?? milestones,
           userXp: nextXp,
           streak: nextStreak,
         }),
@@ -281,7 +292,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     newProjects: Project[],
     newRewards: Reward[] = rewards,
     newXp: number = userXp,
-    newStreak: number = streak
+    newStreak: number = streak,
+    newMilestones: Milestone[] = milestones
   ) => {
     const { updatedGoals, updatedProjects } = recalculateData(newTasks, newGoals, newProjects)
     
@@ -289,10 +301,11 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     setGoals(updatedGoals)
     setProjects(updatedProjects)
     setRewards(newRewards)
+    setMilestones(newMilestones)
     setUserXp(newXp)
     setStreak(newStreak)
 
-    persist(updatedProjects, updatedGoals, newTasks, newRewards, newXp, newStreak)
+    persist(updatedProjects, updatedGoals, newTasks, newRewards, newXp, newStreak, newMilestones)
   }
 
   // Planners setters (backward compatibility)
@@ -347,7 +360,39 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
       t.id === taskId ? { ...t, status: newStatus as typeof t.status } : t
     )
 
-    const nextXp = newStatus === "completed" ? userXp + xpChange : Math.max(0, userXp - xpChange)
+    let nextXp = newStatus === "completed" ? userXp + xpChange : Math.max(0, userXp - xpChange)
+    let nextMilestones = milestones
+
+    // --- Milestone completion detection ---
+    if (newStatus === "completed") {
+      const completedIds = new Set(nextTasks.filter(t => t.status === "completed").map(t => t.id))
+      let milestoneBonusXp = 0
+      let justCompletedMilestone: Milestone | null = null
+
+      nextMilestones = milestones.map((m, idx) => {
+        if (m.status !== "active") return m
+        const allDone = m.requiredTaskIds.length > 0 && m.requiredTaskIds.every(id => completedIds.has(id))
+        if (!allDone) return m
+
+        const completedMilestone: Milestone = { ...m, status: "completed", completedAt: new Date().toISOString() }
+        milestoneBonusXp += m.xpReward ?? 0
+        justCompletedMilestone = completedMilestone
+        return completedMilestone
+      })
+
+      // Unlock the next locked milestone in the same project
+      if (justCompletedMilestone) {
+        const cm = justCompletedMilestone as Milestone
+        nextMilestones = nextMilestones.map(m => {
+          if (m.projectId === cm.projectId && m.status === "locked" && m.order === cm.order + 1) {
+            return { ...m, status: "active" as const }
+          }
+          return m
+        })
+        nextXp += milestoneBonusXp
+        setPendingMilestone(justCompletedMilestone)
+      }
+    }
 
     // Automatically unlock/lock rewards based on new XP
     const nextRewards = rewards.map((r) => {
@@ -356,7 +401,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
       return { ...r, status, currentXp: nextXp }
     })
 
-    updateStore(nextTasks, goals, projects, nextRewards, nextXp, streak)
+    updateStore(nextTasks, goals, projects, nextRewards, nextXp, streak, nextMilestones)
   }
 
   const updateTask = (task: Task) => {
@@ -397,6 +442,43 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     const nextGoals = goals.filter((g) => g.projectId !== projectId)
     const nextTasks = tasks.filter((t) => t.projectId !== projectId)
     updateStore(nextTasks, nextGoals, nextProjects)
+  }
+
+  const updateMilestone = (milestone: Milestone) => {
+    const exists = milestones.some((m) => m.id === milestone.id)
+    let nextMilestones = exists
+      ? milestones.map((m) => (m.id === milestone.id ? milestone : m))
+      : [...milestones, milestone]
+    
+    let nextXp = userXp
+    
+    if (exists) {
+      const original = milestones.find((m) => m.id === milestone.id)
+      if (original && original.status === "completed" && milestone.status === "active") {
+        const xpDeduct = original.xpReward ?? 0
+        nextXp = Math.max(0, userXp - xpDeduct)
+        
+        nextMilestones = nextMilestones.map((m) => {
+          if (m.projectId === milestone.projectId && m.order > milestone.order && m.status !== "completed") {
+            return { ...m, status: "locked" as const }
+          }
+          return m
+        })
+      }
+    }
+
+    const nextRewards = rewards.map((r) => {
+      if (r.status === "redeemed") return r
+      const status = nextXp >= r.xpCost ? ("available" as const) : ("locked" as const)
+      return { ...r, status, currentXp: nextXp }
+    })
+
+    updateStore(tasks, goals, projects, nextRewards, nextXp, streak, nextMilestones)
+  }
+
+  const deleteMilestone = (milestoneId: string) => {
+    const nextMilestones = milestones.filter((m) => m.id !== milestoneId)
+    updateStore(tasks, goals, projects, rewards, userXp, streak, nextMilestones)
   }
 
   const updateReward = (reward: Reward) => {
@@ -444,6 +526,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         goals,
         tasks,
         rewards,
+        milestones,
         userXp,
         streak,
         dailyPlan,
@@ -451,6 +534,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         userId,
         username,
         displayName,
+        pendingMilestone,
+        clearPendingMilestone: () => setPendingMilestone(null),
         toggleTaskComplete,
         updateTask,
         updateTasks,
@@ -462,6 +547,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         updateReward,
         deleteReward,
         redeemReward,
+        updateMilestone,
+        deleteMilestone,
         setDailyPlan,
         setWeeklyPlan,
         logout,

@@ -2,6 +2,22 @@ export type Priority = 'low' | 'medium' | 'high' | 'critical'
 export type ProjectStatus = 'active' | 'paused' | 'completed'
 export type TaskStatus = 'todo' | 'in-progress' | 'completed'
 export type RewardStatus = 'available' | 'locked' | 'redeemed'
+export type MilestoneStatus = 'locked' | 'active' | 'completed'
+
+export interface Milestone {
+  id: string
+  projectId: string
+  goalId?: string
+  name: string
+  description?: string
+  order: number
+  status: MilestoneStatus
+  requiredTaskIds: string[]
+  xpReward?: number
+  rewardLabel?: string
+  completedAt?: string
+}
+
 
 export interface Project {
   id: string

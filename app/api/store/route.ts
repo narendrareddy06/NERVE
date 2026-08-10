@@ -93,6 +93,22 @@ export async function GET(request: Request) {
       status: r.status,
     }))
 
+    // 6. Load Milestones
+    const { data: dbMilestones } = await supabase.from("milestones").select("*").eq("user_id", userId)
+    const milestones = (dbMilestones || []).map((m) => ({
+      id: m.id,
+      projectId: m.project_id,
+      goalId: m.goal_id || undefined,
+      name: m.name,
+      description: m.description || undefined,
+      order: m.order,
+      status: m.status,
+      requiredTaskIds: m.required_task_ids || [],
+      xpReward: m.xp_reward || 0,
+      rewardLabel: m.reward_label || undefined,
+      completedAt: m.completed_at || undefined,
+    }))
+
     return NextResponse.json({
       userXp: userProfile?.user_xp ?? 0,
       streak: userProfile?.streak ?? 0,
@@ -100,6 +116,7 @@ export async function GET(request: Request) {
       goals,
       tasks,
       rewards,
+      milestones,
       // Default fallback plan objects for backward compatibility during client migration
       dailyPlan: { morning: [], afternoon: [], evening: [] },
       weeklyPlan: { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] },
@@ -178,6 +195,21 @@ export async function POST(request: Request) {
       description: r.description || "",
       category: r.category || "",
       status: r.status || "locked",
+    }))
+
+    // 6. Sync milestones
+    await syncTable("milestones", userId, body.milestones ?? [], (m) => ({
+      id: m.id,
+      project_id: m.projectId,
+      goal_id: m.goalId || null,
+      name: m.name,
+      description: m.description || null,
+      order: m.order ?? 0,
+      status: m.status || "locked",
+      required_task_ids: m.requiredTaskIds || [],
+      xp_reward: m.xpReward || 0,
+      reward_label: m.rewardLabel || null,
+      completed_at: m.completedAt || null,
     }))
 
     return NextResponse.json({ success: true })
