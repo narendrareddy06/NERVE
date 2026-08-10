@@ -64,17 +64,30 @@ export default function DashboardPage() {
   }, [])
 
   // 1. Get today's planned tasks from the global store
-  const { dailyPlan } = useNerveStore()
+  const todayStr = useMemo(() => {
+    const d = new Date()
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, "0")
+    const dd = String(d.getDate()).padStart(2, "0")
+    return `${yyyy}-${mm}-${dd}`
+  }, [])
+
+  const todayTasksList = useMemo(() => {
+    return tasks.filter((t) => t.scheduledDate === todayStr)
+  }, [tasks, todayStr])
+
   const todayTasksByBlock = useMemo(() => {
-    const map: Record<string, Task[]> = {}
-    BLOCKS.forEach((block) => {
-      const ids = dailyPlan[block.id] ?? []
-      map[block.id] = ids.map((id) => tasks.find((t) => t.id === id)).filter(Boolean) as Task[]
+    const map: Record<string, Task[]> = { morning: [], afternoon: [], evening: [], flexible: [] }
+    todayTasksList.forEach((task) => {
+      if (task.scheduledBlock === "morning" || task.scheduledBlock === "afternoon" || task.scheduledBlock === "evening") {
+        map[task.scheduledBlock].push(task)
+      } else {
+        map.flexible.push(task)
+      }
     })
     return map
-  }, [dailyPlan, tasks])
+  }, [todayTasksList])
 
-  const todayTasksList = useMemo(() => Object.values(todayTasksByBlock).flat(), [todayTasksByBlock])
   const totalTodayTasks = todayTasksList.length
   const completedToday = todayTasksList.filter((t) => t.status === "completed").length
   const todayProgressPct = totalTodayTasks > 0 ? Math.round((completedToday / totalTodayTasks) * 100) : 0
@@ -229,6 +242,61 @@ export default function DashboardPage() {
                     </div>
                   )
                 })}
+
+                {todayTasksByBlock.flexible && todayTasksByBlock.flexible.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-base">📅</span>
+                      <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Flexible / General</span>
+                      <span className="text-[10px] text-[#64748B]">(Unblocked today)</span>
+                    </div>
+                    <div className="space-y-2">
+                      {todayTasksByBlock.flexible.map((task) => {
+                        const isCompleted = task.status === "completed"
+                        return (
+                          <div
+                            key={task.id}
+                            className={cn(
+                              "flex items-center gap-3 border rounded-xl p-3 transition-all",
+                              isCompleted
+                                ? "border-slate-100 bg-slate-50/50 opacity-60"
+                                : "border-slate-200 hover:border-slate-300 bg-white"
+                            )}
+                          >
+                            <button
+                              onClick={() => toggleTaskComplete(task.id)}
+                              className={cn(
+                                "w-5 h-5 rounded-md border shrink-0 flex items-center justify-center transition-all",
+                                isCompleted
+                                  ? "border-[#10B981] bg-[#10B981]/10"
+                                  : "border-slate-300 hover:border-[#2563EB]/50"
+                              )}
+                            >
+                              {isCompleted && <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981]" />}
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <p className={cn("text-xs font-semibold truncate", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
+                                {task.title}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-[#64748B]">
+                                <span className="text-blue-500 font-semibold">{task.project}</span>
+                                {task.goal && (
+                                  <>
+                                    <span>·</span>
+                                    <span className="truncate">{task.goal}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-[10px] font-bold text-[#8B5CF6] flex items-center gap-0.5">
+                              <Zap className="w-2.5 h-2.5" />+{task.xp}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -40,6 +40,8 @@ export interface Task {
   notes?: string
   project: string
   goal?: string
+  scheduledDate?: string
+  scheduledBlock?: 'morning' | 'afternoon' | 'evening'
 }
 
 export interface Reward {

@@ -36,8 +36,15 @@ function formatDate(d: Date) {
   return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
 }
 
+function formatDateKey(date: Date) {
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, "0")
+  const dd = String(date.getDate()).padStart(2, "0")
+  return `${yyyy}-${mm}-${dd}`
+}
+
 export default function DailyPlannerPage() {
-  const { tasks, dailyPlan, setDailyPlan, updateTask, projects } = useNerveStore()
+  const { tasks, updateTask, projects } = useNerveStore()
   const [date, setDate] = useState(new Date())
   const [dragging, setDragging] = useState<{ taskId: string; from: string | "unscheduled" } | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -47,21 +54,25 @@ export default function DailyPlannerPage() {
   const prevDay = () => { const d = new Date(date); d.setDate(d.getDate() - 1); setDate(d) }
   const nextDay = () => { const d = new Date(date); d.setDate(d.getDate() + 1); setDate(d) }
 
-  // Map task IDs inside dailyPlan to actual task objects
+  const dateStr = useMemo(() => formatDateKey(date), [date])
+
+  // Map task objects dynamically to their scheduled blocks on the active date
   const plan = useMemo(() => {
     const map: Record<string, Task[]> = {}
     BLOCKS.forEach((block) => {
-      const ids = dailyPlan[block.id] ?? []
-      map[block.id] = ids.map((id) => tasks.find((t) => t.id === id)).filter(Boolean) as Task[]
+      map[block.id] = tasks.filter(
+        (t) => t.scheduledDate === dateStr && t.scheduledBlock === block.id
+      )
     })
     return map
-  }, [dailyPlan, tasks])
+  }, [tasks, dateStr])
 
-  // Unscheduled tasks are active/todo tasks that are not placed in any block of the daily plan
+  // Unscheduled tasks for today: active tasks scheduled for today that are NOT in a block
   const unscheduled = useMemo(() => {
-    const scheduledIds = Object.values(dailyPlan).flat()
-    return tasks.filter((t) => !scheduledIds.includes(t.id) && t.status !== "completed")
-  }, [tasks, dailyPlan])
+    return tasks.filter((t) => {
+      return t.scheduledDate === dateStr && t.status !== "completed" && !t.scheduledBlock
+    })
+  }, [tasks, dateStr])
 
   const handleDragStart = (taskId: string, from: string | "unscheduled") => {
     setDragging({ taskId, from })
@@ -69,21 +80,24 @@ export default function DailyPlannerPage() {
 
   const handleDrop = (to: string) => {
     if (!dragging) return
-    const { taskId, from } = dragging
+    const { taskId } = dragging
 
-    const nextDaily = { ...dailyPlan }
-    
-    // 1. Remove task ID from the previous block if it was in the plan
-    if (from !== "unscheduled") {
-      nextDaily[from] = (nextDaily[from] ?? []).filter((id) => id !== taskId)
+    const targetTask = tasks.find((t) => t.id === taskId)
+    if (!targetTask) return
+
+    if (to === "unscheduled") {
+      updateTask({
+        ...targetTask,
+        scheduledBlock: undefined,
+      })
+    } else {
+      updateTask({
+        ...targetTask,
+        scheduledDate: dateStr,
+        scheduledBlock: to as any,
+      })
     }
 
-    // 2. Add task ID to the new block if it is within a block (and not dropping back to unscheduled)
-    if (to !== "unscheduled") {
-      nextDaily[to] = [...(nextDaily[to] ?? []).filter((id) => id !== taskId), taskId]
-    }
-
-    setDailyPlan(nextDaily)
     setDragging(null)
     setDragOver(null)
   }
@@ -102,24 +116,21 @@ export default function DailyPlannerPage() {
       status: "todo",
       projectId: defaultProject.id,
       project: defaultProject.name,
+      scheduledDate: dateStr,
+      scheduledBlock: blockId as any,
     }
     
-    // Add task to global list
     updateTask(newTask)
-
-    // Append to the daily plan block list
-    const nextDaily = {
-      ...dailyPlan,
-      [blockId]: [...(dailyPlan[blockId] ?? []), newId],
-    }
-    setDailyPlan(nextDaily)
-
     setQuickAddText("")
     setQuickAddBlock(null)
   }
 
-  const totalTasks = Object.values(plan).flat().length
-  const totalXP = Object.values(plan).flat().reduce((sum, t) => sum + t.xp, 0)
+  const todayAllTasks = useMemo(() => {
+    return tasks.filter((t) => t.scheduledDate === dateStr)
+  }, [tasks, dateStr])
+
+  const totalTasks = todayAllTasks.length
+  const totalXP = todayAllTasks.reduce((sum, t) => sum + (t.status === "completed" ? 0 : t.xp), 0)
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -128,7 +139,7 @@ export default function DailyPlannerPage() {
         subtitle="Block your time. Own your day."
       />
 
-      {/* Date nav */}
+      {/* Date Navigation */}
       <div className="flex items-center justify-between mb-7 bg-[#FFFFFF] border border-slate-200 rounded-2xl px-5 py-4">
         <button onClick={prevDay} className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100 transition-all">
           <ChevronLeft className="w-4 h-4" />
@@ -143,7 +154,7 @@ export default function DailyPlannerPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
-        {/* Time blocks */}
+        {/* Time Blocks */}
         <div className="lg:col-span-3 space-y-4">
           {BLOCKS.map((block) => {
             const blockTasks = plan[block.id] ?? []
@@ -160,7 +171,7 @@ export default function DailyPlannerPage() {
                 onDragLeave={() => setDragOver(null)}
                 onDrop={() => handleDrop(block.id)}
               >
-                {/* Block header */}
+                {/* Block Header */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <span className="text-xl leading-none">{block.icon}</span>
@@ -183,7 +194,7 @@ export default function DailyPlannerPage() {
                   </button>
                 </div>
 
-                {/* Quick add input */}
+                {/* Quick Add Input */}
                 {quickAddBlock === block.id && (
                   <div className="mb-3 flex gap-2">
                     <input
@@ -206,7 +217,7 @@ export default function DailyPlannerPage() {
                   </div>
                 )}
 
-                {/* Tasks */}
+                {/* Tasks List */}
                 <div className="space-y-2 min-h-[40px]">
                   {blockTasks.length === 0 && !isDragTarget && (
                     <p className="text-xs text-[#64748B]/60 text-center py-3">Drag tasks here or quick add</p>
@@ -218,9 +229,9 @@ export default function DailyPlannerPage() {
                         key={task.id}
                         draggable
                         onDragStart={() => handleDragStart(task.id, block.id)}
-                        className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-grab hover:bg-slate-50 transition-all group"
+                        className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-grab hover:bg-slate-100 transition-all group"
                       >
-                        <GripVertical className="w-3.5 h-3.5 text-[#64748B]/50 shrink-0" />
+                        <GripVertical className="w-3.5 h-3.5 text-[#64748B]/50 shrink-0 cursor-grab" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-[#0F172A] truncate">{task.title}</p>
                           <div className="flex items-center gap-2 mt-0.5">
@@ -228,7 +239,7 @@ export default function DailyPlannerPage() {
                               <Clock className="w-2.5 h-2.5" />{task.estimatedTime}
                             </span>
                             {project && (
-                              <span className="text-xs" style={{ color: project.color }}>
+                              <span className="text-xs font-semibold" style={{ color: project.color }}>
                                 {project.icon} {project.name}
                               </span>
                             )}
@@ -249,31 +260,25 @@ export default function DailyPlannerPage() {
           })}
         </div>
 
-        {/* Unscheduled tasks sidebar */}
+        {/* Unscheduled Tasks Sidebar (1 Column) */}
         <div>
           <div
             className={cn(
-              "bg-[#FFFFFF] border rounded-2xl p-4 transition-all",
-              dragOver === "unscheduled" ? "border-[#2563EB]/30" : "border-slate-200"
+              "bg-[#FFFFFF] border rounded-2xl p-4 min-h-[500px] flex flex-col transition-all duration-150",
+              dragOver === "unscheduled" ? "border-[#2563EB]/30 bg-blue-50/5" : "border-slate-200"
             )}
             onDragOver={(e) => { e.preventDefault(); setDragOver("unscheduled") }}
             onDragLeave={() => setDragOver(null)}
-            onDrop={() => {
-              if (!dragging) return
-              const { taskId, from } = dragging
-              if (from === "unscheduled") return
-              
-              // Remove task ID from the daily plan to make it unscheduled
-              const nextDaily = { ...dailyPlan }
-              nextDaily[from] = (nextDaily[from] ?? []).filter((id) => id !== taskId)
-              
-              setDailyPlan(nextDaily)
-              setDragging(null)
-              setDragOver(null)
-            }}
+            onDrop={() => handleDrop("unscheduled")}
           >
-            <h3 className="text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-3">Unscheduled</h3>
-            <div className="space-y-2 min-h-[60px]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-[#64748B] uppercase tracking-wider">Unscheduled Pool</h3>
+              <span className="bg-slate-100 text-[#64748B] px-2 py-0.5 rounded-full text-xs font-semibold">
+                {unscheduled.length}
+              </span>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto max-h-[550px] pr-1">
               {unscheduled.length === 0 && (
                 <p className="text-xs text-[#64748B]/60 text-center py-4">All tasks scheduled!</p>
               )}
@@ -282,14 +287,17 @@ export default function DailyPlannerPage() {
                   key={task.id}
                   draggable
                   onDragStart={() => handleDragStart(task.id, "unscheduled")}
-                  className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5 cursor-grab hover:bg-slate-50 transition-all"
+                  className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5 cursor-grab hover:bg-slate-100 transition-all shadow-sm hover:shadow"
                 >
-                  <GripVertical className="w-3.5 h-3.5 text-[#64748B]/50 mt-0.5 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-[#0F172A] leading-snug">{task.title}</p>
-                    <p className="text-[10px] text-[#64748B] mt-0.5 flex items-center gap-1">
-                      <Clock className="w-2.5 h-2.5" />{task.estimatedTime}
-                    </p>
+                  <GripVertical className="w-3.5 h-3.5 text-[#64748B]/50 mt-0.5 shrink-0 cursor-grab" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">{task.title}</p>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-[10px] text-[#64748B] flex items-center gap-1">
+                        <Clock className="w-2.5 h-2.5" />{task.estimatedTime}
+                      </span>
+                      <PriorityBadge priority={task.priority} />
+                    </div>
                   </div>
                 </div>
               ))}

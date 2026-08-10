@@ -1,6 +1,6 @@
 "use client"
 
-import React, { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useContext, useState, useEffect, useMemo } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import {
   type Project,
@@ -23,6 +23,7 @@ interface NerveStoreContextType {
   displayName: string | null
   toggleTaskComplete: (taskId: string) => void
   updateTask: (task: Task) => void
+  updateTasks: (newTasks: Task[]) => void
   deleteTask: (taskId: string) => void
   updateGoal: (goal: Goal) => void
   deleteGoal: (goalId: string) => void
@@ -37,6 +38,12 @@ interface NerveStoreContextType {
 }
 
 const NerveStoreContext = createContext<NerveStoreContextType | undefined>(undefined)
+
+function getWeekStart(d: Date) {
+  const day = d.getDay()
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1)
+  return new Date(d.setDate(diff))
+}
 
 export function NerveStoreProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -53,20 +60,6 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   const [rewards, setRewards] = useState<Reward[]>([])
   const [userXp, setUserXp] = useState(0)
   const [streak, setStreak] = useState(0)
-  const [dailyPlan, setDailyPlanState] = useState<Record<string, string[]>>({
-    morning: [],
-    afternoon: [],
-    evening: [],
-  })
-  const [weeklyPlan, setWeeklyPlanState] = useState<Record<number, string[]>>({
-    0: [],
-    1: [],
-    2: [],
-    3: [],
-    4: [],
-    5: [],
-    6: [],
-  })
 
   // 1. Monitor local user session and route redirection
   useEffect(() => {
@@ -115,14 +108,45 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         const res = await fetch(`/api/store?userId=${userId}`)
         if (res.ok) {
           const data = await res.json()
+          const fetchedTasks: Task[] = data.tasks ?? []
+
+          // Rollover check: If task is scheduled in the past and is not completed, unschedule it
+          const todayD = new Date()
+          const yyyy = todayD.getFullYear()
+          const mm = String(todayD.getMonth() + 1).padStart(2, "0")
+          const dd = String(todayD.getDate()).padStart(2, "0")
+          const localTodayStr = `${yyyy}-${mm}-${dd}`
+
+          let hasRollover = false
+          const rolledTasks = fetchedTasks.map((task) => {
+            if (task.scheduledDate && task.scheduledDate < localTodayStr && task.status !== "completed") {
+              hasRollover = true
+              return {
+                ...task,
+                scheduledDate: undefined,
+                scheduledBlock: undefined,
+              }
+            }
+            return task
+          })
+
           setProjects(data.projects ?? [])
           setGoals(data.goals ?? [])
-          setTasks(data.tasks ?? [])
+          setTasks(rolledTasks)
           setRewards(data.rewards ?? [])
           setUserXp(data.userXp ?? 0)
           setStreak(data.streak ?? 0)
-          setDailyPlanState(data.dailyPlan ?? { morning: [], afternoon: [], evening: [] })
-          setWeeklyPlanState(data.weeklyPlan ?? { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] })
+
+          if (hasRollover) {
+            persist(
+              data.projects ?? [],
+              data.goals ?? [],
+              rolledTasks,
+              data.rewards ?? [],
+              data.userXp ?? 0,
+              data.streak ?? 0
+            )
+          }
         }
       } catch (e) {
         console.error("Error loading Nerve state from backend API:", e)
@@ -132,6 +156,44 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     loadData()
   }, [userId])
 
+  // Derived dailyPlan and weeklyPlan states based on tasks list (backward compatibility)
+  const todayStr = useMemo(() => {
+    const d = new Date()
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, "0")
+    const dd = String(d.getDate()).padStart(2, "0")
+    return `${yyyy}-${mm}-${dd}`
+  }, [tasks]) // Recalculate if tasks change to keep UI fresh
+
+  const dailyPlan = useMemo(() => {
+    const todayTasks = tasks.filter((t) => t.scheduledDate === todayStr)
+    return {
+      morning: todayTasks.filter((t) => t.scheduledBlock === "morning").map((t) => t.id),
+      afternoon: todayTasks.filter((t) => t.scheduledBlock === "afternoon").map((t) => t.id),
+      evening: todayTasks.filter((t) => t.scheduledBlock === "evening").map((t) => t.id),
+    }
+  }, [tasks, todayStr])
+
+  const currentWeekDates = useMemo(() => {
+    const start = getWeekStart(new Date())
+    return [...Array(7)].map((_, i) => {
+      const d = new Date(start)
+      d.setDate(start.getDate() + i)
+      const yyyy = d.getFullYear()
+      const mm = String(d.getMonth() + 1).padStart(2, "0")
+      const dd = String(d.getDate()).padStart(2, "0")
+      return `${yyyy}-${mm}-${dd}`
+    })
+  }, [tasks])
+
+  const weeklyPlan = useMemo(() => {
+    const map: Record<number, string[]> = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
+    currentWeekDates.forEach((dateStr, i) => {
+      map[i] = tasks.filter((t) => t.scheduledDate === dateStr).map((t) => t.id)
+    })
+    return map
+  }, [tasks, currentWeekDates])
+
   // Helper to persist everything to the backend API
   const persist = async (
     nextProjects: Project[],
@@ -139,9 +201,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     nextTasks: Task[],
     nextRewards: Reward[],
     nextXp: number,
-    nextStreak: number,
-    nextDaily: Record<string, string[]> = dailyPlan,
-    nextWeekly: Record<number, string[]> = weeklyPlan
+    nextStreak: number
   ) => {
     if (!userId) return
     try {
@@ -155,8 +215,6 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           rewards: nextRewards,
           userXp: nextXp,
           streak: nextStreak,
-          dailyPlan: nextDaily,
-          weeklyPlan: nextWeekly,
         }),
       })
     } catch (e) {
@@ -216,16 +274,14 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     return { updatedGoals, updatedProjects }
   }
 
-  // 2. State update wrappers that trigger recalculation and persistence
+  // State update wrapper
   const updateStore = (
     newTasks: Task[],
     newGoals: Goal[],
     newProjects: Project[],
     newRewards: Reward[] = rewards,
     newXp: number = userXp,
-    newStreak: number = streak,
-    newDaily: Record<string, string[]> = dailyPlan,
-    newWeekly: Record<number, string[]> = weeklyPlan
+    newStreak: number = streak
   ) => {
     const { updatedGoals, updatedProjects } = recalculateData(newTasks, newGoals, newProjects)
     
@@ -235,19 +291,48 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     setRewards(newRewards)
     setUserXp(newXp)
     setStreak(newStreak)
-    setDailyPlanState(newDaily)
-    setWeeklyPlanState(newWeekly)
 
-    persist(updatedProjects, updatedGoals, newTasks, newRewards, newXp, newStreak, newDaily, newWeekly)
+    persist(updatedProjects, updatedGoals, newTasks, newRewards, newXp, newStreak)
   }
 
-  // Planners setters
+  // Planners setters (backward compatibility)
   const setDailyPlan = (plan: Record<string, string[]>) => {
-    updateStore(tasks, goals, projects, rewards, userXp, streak, plan, weeklyPlan)
+    const nextTasks = tasks.map((t) => {
+      if (plan.morning?.includes(t.id)) {
+        return { ...t, scheduledDate: todayStr, scheduledBlock: "morning" as const }
+      }
+      if (plan.afternoon?.includes(t.id)) {
+        return { ...t, scheduledDate: todayStr, scheduledBlock: "afternoon" as const }
+      }
+      if (plan.evening?.includes(t.id)) {
+        return { ...t, scheduledDate: todayStr, scheduledBlock: "evening" as const }
+      }
+      if (t.scheduledDate === todayStr) {
+        return { ...t, scheduledDate: undefined, scheduledBlock: undefined }
+      }
+      return t
+    })
+    updateStore(nextTasks, goals, projects)
   }
 
   const setWeeklyPlan = (plan: Record<number, string[]>) => {
-    updateStore(tasks, goals, projects, rewards, userXp, streak, dailyPlan, plan)
+    const nextTasks = tasks.map((t) => {
+      let dayIndex: number | null = null
+      for (let i = 0; i < 7; i++) {
+        if (plan[i]?.includes(t.id)) {
+          dayIndex = i
+          break
+        }
+      }
+      if (dayIndex !== null) {
+        return { ...t, scheduledDate: currentWeekDates[dayIndex], scheduledBlock: t.scheduledBlock }
+      }
+      if (t.scheduledDate && currentWeekDates.includes(t.scheduledDate)) {
+        return { ...t, scheduledDate: undefined, scheduledBlock: undefined }
+      }
+      return t
+    })
+    updateStore(nextTasks, goals, projects)
   }
 
   // Operations
@@ -271,7 +356,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
       return { ...r, status, currentXp: nextXp }
     })
 
-    updateStore(nextTasks, goals, projects, nextRewards, nextXp, streak, dailyPlan, weeklyPlan)
+    updateStore(nextTasks, goals, projects, nextRewards, nextXp, streak)
   }
 
   const updateTask = (task: Task) => {
@@ -280,20 +365,13 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     updateStore(nextTasks, goals, projects)
   }
 
+  const updateTasks = (newTasks: Task[]) => {
+    updateStore(newTasks, goals, projects)
+  }
+
   const deleteTask = (taskId: string) => {
     const nextTasks = tasks.filter((t) => t.id !== taskId)
-    // Clean up task references in plans
-    const nextDaily = { ...dailyPlan }
-    Object.keys(nextDaily).forEach((key) => {
-      nextDaily[key] = nextDaily[key].filter((id) => id !== taskId)
-    })
-    const nextWeekly = { ...weeklyPlan }
-    Object.keys(nextWeekly).forEach((key) => {
-      const idx = Number(key)
-      nextWeekly[idx] = nextWeekly[idx].filter((id) => id !== taskId)
-    })
-
-    updateStore(nextTasks, goals, projects, rewards, userXp, streak, nextDaily, nextWeekly)
+    updateStore(nextTasks, goals, projects)
   }
 
   const updateGoal = (goal: Goal) => {
@@ -304,7 +382,6 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
 
   const deleteGoal = (goalId: string) => {
     const nextGoals = goals.filter((g) => g.id !== goalId)
-    // Clean up task references
     const nextTasks = tasks.map((t) => (t.goalId === goalId ? { ...t, goalId: undefined, goal: undefined } : t))
     updateStore(nextTasks, nextGoals, projects)
   }
@@ -347,7 +424,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
       return { ...r, status, currentXp: nextXp }
     })
 
-    updateStore(tasks, goals, projects, nextRewards, nextXp, streak, dailyPlan, weeklyPlan)
+    updateStore(tasks, goals, projects, nextRewards, nextXp, streak)
   }
 
   const logout = () => {
@@ -376,6 +453,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         displayName,
         toggleTaskComplete,
         updateTask,
+        updateTasks,
         deleteTask,
         updateGoal,
         deleteGoal,

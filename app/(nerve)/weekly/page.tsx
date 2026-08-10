@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { ChevronLeft, ChevronRight, Plus, Zap, GripVertical } from "lucide-react"
+import { ChevronLeft, ChevronRight, Plus, Zap, GripVertical, Sparkles } from "lucide-react"
 import { PriorityBadge, SectionHeader } from "@/components/nerve/ui"
 import { useNerveStore } from "@/lib/nerve-store"
 import { type Task } from "@/lib/nerve-data"
@@ -29,12 +29,39 @@ function formatWeekRange(dates: Date[]) {
   return `${first} — ${last}`
 }
 
+function formatDateKey(date: Date) {
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, "0")
+  const dd = String(date.getDate()).padStart(2, "0")
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function parseEstimatedMinutes(timeStr?: string): number {
+  if (!timeStr) return 60
+  const cleaned = timeStr.trim().toLowerCase()
+  if (cleaned.endsWith("h")) {
+    const hours = parseFloat(cleaned.slice(0, -1))
+    return isNaN(hours) ? 60 : hours * 60
+  }
+  if (cleaned.endsWith("m")) {
+    const mins = parseFloat(cleaned.slice(0, -1))
+    return isNaN(mins) ? 60 : mins
+  }
+  const parsed = parseFloat(cleaned)
+  return isNaN(parsed) ? 60 : parsed * 60
+}
+
 export default function WeeklyPlannerPage() {
   const today = new Date()
-  const { tasks, weeklyPlan, setWeeklyPlan, projects } = useNerveStore()
+  const { tasks, projects, goals, updateTask, updateTasks, toggleTaskComplete } = useNerveStore()
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()))
-  const [dragging, setDragging] = useState<{ taskId: string; fromDay: number } | null>(null)
-  const [dragOver, setDragOver] = useState<number | null>(null)
+  const [previewTasks, setPreviewTasks] = useState<Task[] | null>(null)
+
+  const currentTasks = previewTasks ?? tasks
+  
+  // Drag state
+  const [dragging, setDragging] = useState<{ taskId: string; from: number | "unscheduled" } | null>(null)
+  const [dragOver, setDragOver] = useState<number | "unscheduled" | null>(null)
 
   const weekDates = getWeekDates(new Date(weekStart))
 
@@ -53,158 +80,461 @@ export default function WeeklyPlannerPage() {
   const isToday = (d: Date) =>
     d.toDateString() === today.toDateString()
 
-  // Map task IDs in weeklyPlan to task objects
+  // Map task objects dynamically to their scheduled dates
   const weekPlan = useMemo(() => {
     const map: Record<number, Task[]> = {}
-    for (let i = 0; i < 7; i++) {
-      const ids = weeklyPlan[i] ?? []
-      map[i] = ids.map((id) => tasks.find((t) => t.id === id)).filter(Boolean) as Task[]
-    }
+    weekDates.forEach((date, i) => {
+      const dateStr = formatDateKey(date)
+      map[i] = currentTasks.filter((t) => t.scheduledDate === dateStr)
+    })
     return map
-  }, [weeklyPlan, tasks])
+  }, [currentTasks, weekDates])
 
-  const handleDrop = (toDay: number) => {
+  // Filter tasks that have not been scheduled yet
+  const unscheduledTasks = useMemo(() => {
+    return currentTasks.filter((t) => !t.scheduledDate && t.status !== "completed")
+  }, [currentTasks])
+
+  const handleDragStart = (taskId: string, from: number | "unscheduled") => {
+    setDragging({ taskId, from })
+  }
+
+  const handleDrop = (to: number | "unscheduled") => {
     if (!dragging) return
-    const { taskId, fromDay } = dragging
-    if (fromDay === toDay) return
+    const { taskId } = dragging
 
-    const nextWeekly = { ...weeklyPlan }
-    nextWeekly[fromDay] = (nextWeekly[fromDay] ?? []).filter((id) => id !== taskId)
-    nextWeekly[toDay] = [...(nextWeekly[toDay] ?? []).filter((id) => id !== taskId), taskId]
+    const targetTask = currentTasks.find((t) => t.id === taskId)
+    if (!targetTask) return
 
-    setWeeklyPlan(nextWeekly)
+    let updatedTask: Task
+    if (to === "unscheduled") {
+      updatedTask = {
+        ...targetTask,
+        scheduledDate: undefined,
+        scheduledBlock: undefined,
+      }
+    } else {
+      const dateStr = formatDateKey(weekDates[to])
+      updatedTask = {
+        ...targetTask,
+        scheduledDate: dateStr,
+      }
+    }
+
+    if (previewTasks) {
+      const updated = previewTasks.map((t) => (t.id === taskId ? updatedTask : t))
+      setPreviewTasks(updated)
+    } else {
+      updateTask(updatedTask)
+    }
+
     setDragging(null)
     setDragOver(null)
   }
 
+  const autoPlanWeek = () => {
+    // 1. Get all active, unscheduled tasks
+    const activeUnscheduled = tasks.filter((t) => !t.scheduledDate && t.status !== "completed")
+    if (activeUnscheduled.length === 0) return
+
+    // 2. Build map of goals by ID for quick deadline lookup
+    const goalMap = new Map(goals.map((g) => [g.id, g]))
+
+    // 3. Heuristic scoring for each task
+    const scoredTasks = activeUnscheduled.map((task) => {
+      let score = 0
+
+      // Priority points
+      if (task.priority === "critical") score += 100
+      else if (task.priority === "high") score += 70
+      else if (task.priority === "medium") score += 40
+      else if (task.priority === "low") score += 10
+
+      // XP value bonus
+      score += task.xp * 0.1
+
+      // Goal deadline check
+      if (task.goalId) {
+        const goal = goalMap.get(task.goalId)
+        if (goal && goal.deadline) {
+          try {
+            const deadlineDate = new Date(goal.deadline)
+            const diffTime = deadlineDate.getTime() - today.getTime()
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+            if (diffDays >= 0 && diffDays <= 7) {
+              score += 150 // Urgent deadline within a week!
+            } else if (diffDays > 7 && diffDays <= 14) {
+              score += 50 // Moderately near deadline
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      const duration = parseEstimatedMinutes(task.estimatedTime)
+
+      return { task, score, duration }
+    })
+
+    // Sort tasks by score in descending order
+    scoredTasks.sort((a, b) => b.score - a.score)
+
+    // 4. Distribute tasks across week days
+    let updatedTasks = [...tasks]
+
+    // Create tracking structure for day workloads
+    const dayWorkloads = [...Array(7)].map((_, i) => ({
+      index: i,
+      dateKey: formatDateKey(weekDates[i]),
+      minutes: 0,
+      taskCount: 0,
+    }))
+
+    // Max daily workload limits to ensure no overloading
+    const MAX_MINUTES_PER_DAY = 300 // 5 hours
+    const MAX_TASKS_PER_DAY = 4
+
+    scoredTasks.forEach(({ task, duration }) => {
+      let bestDay = null
+      let minMinutes = Infinity
+
+      for (const day of dayWorkloads) {
+        const fitsTasks = day.taskCount < MAX_TASKS_PER_DAY
+        const fitsMinutes = day.minutes === 0 || (day.minutes + duration <= MAX_MINUTES_PER_DAY)
+
+        if (fitsTasks && fitsMinutes) {
+          if (day.minutes < minMinutes) {
+            minMinutes = day.minutes
+            bestDay = day
+          }
+        }
+      }
+
+      if (bestDay) {
+        bestDay.minutes += duration
+        bestDay.taskCount += 1
+        
+        updatedTasks = updatedTasks.map((t) =>
+          t.id === task.id ? { ...t, scheduledDate: bestDay.dateKey } : t
+        )
+      }
+    })
+
+    setPreviewTasks(updatedTasks)
+  }
+
+  const handleCancelPreview = () => {
+    setPreviewTasks(null)
+  }
+
+  const handleRegeneratePreview = () => {
+    autoPlanWeek()
+  }
+
+  const handleAcceptPreview = () => {
+    if (!previewTasks) return
+    updateTasks(previewTasks)
+    setPreviewTasks(null)
+  }
+
+  const handleToggleComplete = (taskId: string) => {
+    if (previewTasks) {
+      const nextTasks = previewTasks.map((t) => {
+        if (t.id === taskId) {
+          const newStatus = t.status === "completed" ? ("todo" as const) : ("completed" as const)
+          return { ...t, status: newStatus }
+        }
+        return t
+      })
+      setPreviewTasks(nextTasks)
+    } else {
+      toggleTaskComplete(taskId)
+    }
+  }
+
   const totalTasks = Object.values(weekPlan).flat().length
-  const totalXP = Object.values(weekPlan).flat().reduce((s, t) => s + t.xp, 0)
+  const totalXP = Object.values(weekPlan).flat().reduce((s, t) => s + (t.status === "completed" ? 0 : t.xp), 0)
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-6">
       <SectionHeader
         title="Weekly Planner"
         subtitle="See the full week. Move fast, stay balanced."
+        action={
+          !previewTasks && (
+            <button
+              onClick={autoPlanWeek}
+              disabled={unscheduledTasks.length === 0}
+              className={cn(
+                "inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all border-0",
+                unscheduledTasks.length === 0
+                  ? "bg-slate-100 text-slate-400 cursor-not-allowed shadow-none"
+                  : "bg-[#4F46E5] hover:bg-[#4338CA] text-white shadow-indigo-500/10 hover:scale-[1.02] active:scale-[0.98]"
+              )}
+              title={unscheduledTasks.length === 0 ? "No unscheduled tasks available to plan" : "Automatically plan your week"}
+            >
+              <Sparkles className="w-4 h-4" /> Plan My Week
+            </button>
+          )
+        }
       />
 
-      {/* Week nav */}
-      <div className="flex items-center justify-between mb-7 bg-[#FFFFFF] border border-slate-200 rounded-2xl px-5 py-4">
+      {previewTasks && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl p-5 shadow-lg flex flex-col md:flex-row items-center justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-1.5">
+              <Sparkles className="w-5 h-5 animate-pulse" /> AI Planner Preview
+            </h3>
+            <p className="text-sm text-blue-100 mt-0.5">
+              Unscheduled tasks distributed across the week. Drag tasks to edit, or accept/cancel the plan.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={handleCancelPreview}
+              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all border-0 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleRegeneratePreview}
+              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all border-0 cursor-pointer"
+            >
+              Regenerate
+            </button>
+            <button
+              onClick={handleAcceptPreview}
+              className="bg-white text-blue-600 hover:bg-blue-50 px-5 py-2 rounded-xl text-sm font-bold transition-all shadow-md border-0 cursor-pointer"
+            >
+              Accept Plan
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Week Navigation */}
+      <div className="flex items-center justify-between bg-[#FFFFFF] border border-slate-200 rounded-2xl px-5 py-4">
         <button onClick={prevWeek} className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100 transition-all">
           <ChevronLeft className="w-4 h-4" />
         </button>
         <div className="text-center">
           <p className="text-base font-bold text-[#0F172A]">{formatWeekRange(weekDates)}</p>
-          <p className="text-xs text-[#64748B] mt-0.5">{totalTasks} tasks planned · {totalXP} XP</p>
+          <p className="text-xs text-[#64748B] mt-0.5">{totalTasks} tasks planned · {totalXP} XP potential</p>
         </div>
         <button onClick={nextWeek} className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100 transition-all">
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Week grid */}
-      <div className="grid grid-cols-7 gap-3">
-        {DAYS.map((day, i) => {
-          const date = weekDates[i]
-          const dayTasks = weekPlan[i] ?? []
-          const today = isToday(date)
-          const isDragTarget = dragOver === i
+      {/* Two-Column Planning Workspace */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        
+        {/* Main 7-Day Grid (3 Columns) */}
+        <div className="lg:col-span-3 space-y-6">
+          <div className="grid grid-cols-7 gap-3">
+            {DAYS.map((day, i) => {
+              const date = weekDates[i]
+              const dayTasks = weekPlan[i] ?? []
+              const todayActive = isToday(date)
+              const isDragTarget = dragOver === i
 
-          return (
-            <div
-              key={i}
-              className={cn(
-                "bg-[#FFFFFF] border rounded-2xl p-3 min-h-[280px] flex flex-col transition-all duration-150",
-                today ? "border-[#2563EB]/30" : "border-slate-200",
-                isDragTarget ? "bg-[#2563EB]/5 border-[#2563EB]/30" : ""
-              )}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(i) }}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={() => handleDrop(i)}
-            >
-              {/* Day header */}
-              <div className="mb-3 text-center">
-                <p className={cn("text-xs font-semibold uppercase tracking-wider", today ? "text-[#2563EB]" : "text-[#64748B]")}>
-                  {day}
-                </p>
-                <div className={cn(
-                  "w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mx-auto mt-1",
-                  today ? "bg-[#2563EB] text-white" : "text-[#0F172A]"
-                )}>
-                  {date.getDate()}
-                </div>
-                {dayTasks.length > 0 && (
-                  <div className="flex items-center justify-center gap-1 mt-1.5">
-                    <Zap className="w-2.5 h-2.5 text-[#8B5CF6]" />
-                    <span className="text-[10px] text-[#8B5CF6] font-semibold">
-                      {dayTasks.reduce((s, t) => s + t.xp, 0)}
-                    </span>
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    "bg-[#FFFFFF] border rounded-2xl p-3 min-h-[340px] flex flex-col transition-all duration-150",
+                    todayActive ? "border-[#2563EB]/40 bg-blue-50/5" : "border-slate-200",
+                    isDragTarget ? "bg-[#2563EB]/5 border-[#2563EB]/30 shadow-inner" : ""
+                  )}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(i) }}
+                  onDragLeave={() => setDragOver(null)}
+                  onDrop={() => handleDrop(i)}
+                >
+                  {/* Day Header */}
+                  <div className="mb-3 text-center">
+                    <p className={cn("text-xs font-semibold uppercase tracking-wider", todayActive ? "text-[#2563EB]" : "text-[#64748B]")}>
+                      {day}
+                    </p>
+                    <div className={cn(
+                      "w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mx-auto mt-1",
+                      todayActive ? "bg-[#2563EB] text-white" : "text-[#0F172A]"
+                    )}>
+                      {date.getDate()}
+                    </div>
+                    {dayTasks.length > 0 && (
+                      <div className="flex items-center justify-center gap-1 mt-1.5">
+                        <Zap className="w-2.5 h-2.5 text-[#8B5CF6]" />
+                        <span className="text-[10px] text-[#8B5CF6] font-semibold">
+                          {dayTasks.reduce((s, t) => s + (t.status === "completed" ? 0 : t.xp), 0)}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              {/* Tasks */}
-              <div className="flex-1 space-y-1.5">
-                {dayTasks.map((task) => {
-                  const project = projects.find((p) => p.id === task.projectId)
-                  return (
-                    <div
-                      key={task.id}
-                      draggable
-                      onDragStart={() => setDragging({ taskId: task.id, fromDay: i })}
-                      className="group flex items-start gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2 cursor-grab hover:bg-slate-100 transition-all"
-                    >
-                      <GripVertical className="w-3 h-3 text-[#64748B]/40 mt-0.5 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-medium text-[#0F172A] leading-snug line-clamp-2">
-                          {task.title}
-                        </p>
-                        {project && (
-                          <p className="text-[10px] mt-0.5 truncate" style={{ color: project.color }}>
+                  {/* Tasks Container */}
+                  <div className="flex-1 space-y-1.5">
+                    {dayTasks.map((task) => {
+                      const project = projects.find((p) => p.id === task.projectId)
+                      const isCompleted = task.status === "completed"
+                      const isTentative = previewTasks && !tasks.find((t) => t.id === task.id)?.scheduledDate
+                      
+                      return (
+                        <div
+                          key={task.id}
+                          draggable
+                          onDragStart={() => handleDragStart(task.id, i)}
+                          className={cn(
+                            "group flex items-start gap-1.5 border rounded-xl p-2 cursor-grab transition-all",
+                            isCompleted ? "opacity-60 border-slate-100 bg-slate-100/50" :
+                            isTentative ? "bg-[#F5F3FF] border-dashed border-[#8B5CF6]/50 hover:bg-[#EDE9FE]" :
+                            "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                          )}
+                        >
+                          <GripVertical className="w-3 h-3 text-[#64748B]/40 mt-1 shrink-0 cursor-grab" />
+                          
+                          {/* Inline Checkbox to Complete Task */}
+                          <div className="flex items-center shrink-0 mt-0.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleToggleComplete(task.id) }}
+                              className={cn(
+                                "w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all",
+                                isCompleted
+                                  ? "bg-emerald-500 border-emerald-500 text-white"
+                                  : "border-slate-300 hover:border-slate-400 bg-white"
+                              )}
+                            >
+                              {isCompleted && (
+                                <svg className="w-2 h-2 fill-current" viewBox="0 0 20 20">
+                                  <path d="M0 11l2-2 5 5L18 3l2 2L7 18z" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <p className={cn(
+                              "text-[11px] font-medium text-[#0F172A] leading-snug line-clamp-2",
+                              isCompleted ? "line-through text-[#64748B]" : ""
+                            )}>
+                              {task.title}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              {project && (
+                                <p className="text-[9px] truncate font-semibold" style={{ color: project.color }}>
+                                  {project.icon} {project.name}
+                                </p>
+                              )}
+                              {isTentative && (
+                                <span className="inline-flex items-center gap-0.5 bg-[#8B5CF6]/10 text-[#8B5CF6] text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                                  <Sparkles className="w-2 h-2 animate-pulse" /> AI Plan
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {dayTasks.length === 0 && !isDragTarget && (
+                      <div className="flex items-center justify-center h-16 border border-dashed border-slate-200 rounded-xl">
+                        <Plus className="w-3.5 h-3.5 text-[#64748B]/40" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Workload Summary Graph */}
+          <div className="bg-[#FFFFFF] border border-slate-200 rounded-2xl p-5">
+            <h3 className="text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-4">Workload Overview</h3>
+            <div className="grid grid-cols-7 gap-3">
+              {DAYS.map((day, i) => {
+                const count = (weekPlan[i] ?? []).length
+                const maxTasks = 5
+                const height = Math.max(4, (count / maxTasks) * 48)
+                const todayActive = isToday(weekDates[i])
+                return (
+                  <div key={i} className="flex flex-col items-center gap-2">
+                    <div className="w-full h-12 flex items-end justify-center">
+                      <div
+                        className="w-full rounded-t-lg transition-all duration-500"
+                        style={{
+                          height: `${height}px`,
+                          background: todayActive ? "#2563EB" : count > 3 ? "#EF4444" : count > 1 ? "#10B981" : "#E2E8F0",
+                        }}
+                      />
+                    </div>
+                    <span className={cn("text-[11px] font-medium", todayActive ? "text-[#2563EB]" : "text-[#64748B]")}>{day}</span>
+                    <span className="text-[10px] text-[#64748B]">{count}t</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Unscheduled Sidebar (1 Column) */}
+        <div className="lg:col-span-1">
+          <div
+            className={cn(
+              "bg-[#FFFFFF] border rounded-2xl p-4 min-h-[500px] flex flex-col transition-all duration-150",
+              dragOver === "unscheduled" ? "border-[#2563EB]/40 bg-blue-50/5" : "border-slate-200"
+            )}
+            onDragOver={(e) => { e.preventDefault(); setDragOver("unscheduled") }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={() => handleDrop("unscheduled")}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-[#0F172A]">Unscheduled Pool</h3>
+              <span className="bg-slate-100 text-[#64748B] px-2 py-0.5 rounded-full text-xs font-semibold">
+                {unscheduledTasks.length}
+              </span>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto max-h-[550px] pr-1">
+              {unscheduledTasks.map((task) => {
+                const project = projects.find((p) => p.id === task.projectId)
+                return (
+                  <div
+                    key={task.id}
+                    draggable
+                    onDragStart={() => handleDragStart(task.id, "unscheduled")}
+                    className="group flex items-start gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2.5 cursor-grab hover:bg-slate-100 transition-all shadow-sm hover:shadow"
+                  >
+                    <GripVertical className="w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">
+                        {task.title}
+                      </p>
+                      <div className="flex items-center justify-between mt-2">
+                        {project ? (
+                          <span className="text-[10px] font-semibold truncate max-w-[80px]" style={{ color: project.color }}>
                             {project.icon} {project.name}
-                          </p>
+                          </span>
+                        ) : (
+                          <span />
                         )}
+                        <PriorityBadge priority={task.priority} />
                       </div>
                     </div>
-                  )
-                })}
-
-                {dayTasks.length === 0 && !isDragTarget && (
-                  <div className="flex items-center justify-center h-16 border border-dashed border-slate-200 rounded-xl">
-                    <Plus className="w-3.5 h-3.5 text-[#64748B]/40" />
                   </div>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+                )
+              })}
 
-      {/* Workload summary */}
-      <div className="mt-6 bg-[#FFFFFF] border border-slate-200 rounded-2xl p-5">
-        <h3 className="text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-4">Workload Overview</h3>
-        <div className="grid grid-cols-7 gap-3">
-          {DAYS.map((day, i) => {
-            const count = (weekPlan[i] ?? []).length
-            const maxTasks = 5
-            const height = Math.max(4, (count / maxTasks) * 48)
-            const today = isToday(weekDates[i])
-            return (
-              <div key={i} className="flex flex-col items-center gap-2">
-                <div className="w-full h-12 flex items-end justify-center">
-                  <div
-                    className="w-full rounded-t-lg transition-all duration-500"
-                    style={{
-                      height: `${height}px`,
-                      background: today ? "#2563EB" : count > 3 ? "#EF4444" : count > 1 ? "#10B981" : "rgba(255,255,255,0.08)",
-                    }}
-                  />
+              {unscheduledTasks.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-48 border border-dashed border-slate-200 rounded-xl px-4 text-center">
+                  <p className="text-xs text-[#64748B]">All tasks scheduled!</p>
+                  <p className="text-[10px] text-[#64748B]/60 mt-1">Drag tasks back here to unschedule them.</p>
                 </div>
-                <span className={cn("text-[11px] font-medium", today ? "text-[#2563EB]" : "text-[#64748B]")}>{day}</span>
-                <span className="text-[10px] text-[#64748B]">{count}t</span>
-              </div>
-            )
-          })}
+              )}
+            </div>
+          </div>
         </div>
+
       </div>
     </div>
   )

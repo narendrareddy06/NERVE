@@ -75,6 +75,8 @@ export async function GET(request: Request) {
       xp: t.xp,
       status: t.status,
       notes: t.notes,
+      scheduledDate: t.scheduled_date || undefined,
+      scheduledBlock: t.scheduled_block || undefined,
     }))
 
     // 5. Load Rewards
@@ -89,30 +91,6 @@ export async function GET(request: Request) {
       status: r.status,
     }))
 
-    // 6. Load Daily Plans
-    const { data: dbDaily } = await supabase.from("daily_plans").select("*").eq("user_id", userId).maybeSingle()
-    const dailyPlan = dbDaily
-      ? {
-          morning: dbDaily.morning || [],
-          afternoon: dbDaily.afternoon || [],
-          evening: dbDaily.evening || [],
-        }
-      : { morning: [], afternoon: [], evening: [] }
-
-    // 7. Load Weekly Plans
-    const { data: dbWeekly } = await supabase.from("weekly_plans").select("*").eq("user_id", userId).maybeSingle()
-    const weeklyPlan = dbWeekly
-      ? {
-          0: dbWeekly.day_0 || [],
-          1: dbWeekly.day_1 || [],
-          2: dbWeekly.day_2 || [],
-          3: dbWeekly.day_3 || [],
-          4: dbWeekly.day_4 || [],
-          5: dbWeekly.day_5 || [],
-          6: dbWeekly.day_6 || [],
-        }
-      : { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
-
     return NextResponse.json({
       userXp: userProfile?.user_xp ?? 0,
       streak: userProfile?.streak ?? 0,
@@ -120,8 +98,9 @@ export async function GET(request: Request) {
       goals,
       tasks,
       rewards,
-      dailyPlan,
-      weeklyPlan,
+      // Default fallback plan objects for backward compatibility during client migration
+      dailyPlan: { morning: [], afternoon: [], evening: [] },
+      weeklyPlan: { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] },
     })
   } catch (error) {
     console.error("GET store error:", error)
@@ -171,7 +150,7 @@ export async function POST(request: Request) {
       description: g.description || "",
     }))
 
-    // 4. Sync tasks
+    // 4. Sync tasks with the new columns
     await syncTable("tasks", userId, body.tasks ?? [], (t) => ({
       id: t.id,
       project_id: t.projectId,
@@ -182,6 +161,8 @@ export async function POST(request: Request) {
       xp: t.xp ?? 50,
       status: t.status || "todo",
       notes: t.notes || "",
+      scheduled_date: t.scheduledDate || null,
+      scheduled_block: t.scheduled_block || null,
     }))
 
     // 5. Sync rewards
@@ -194,36 +175,6 @@ export async function POST(request: Request) {
       category: r.category || "",
       status: r.status || "locked",
     }))
-
-    // 6. Sync daily plans
-    if (body.dailyPlan) {
-      await supabase
-        .from("daily_plans")
-        .upsert({
-          user_id: userId,
-          morning: body.dailyPlan.morning || [],
-          afternoon: body.dailyPlan.afternoon || [],
-          evening: body.dailyPlan.evening || [],
-          updated_at: new Date().toISOString(),
-        })
-    }
-
-    // 7. Sync weekly plans
-    if (body.weeklyPlan) {
-      await supabase
-        .from("weekly_plans")
-        .upsert({
-          user_id: userId,
-          day_0: body.weeklyPlan[0] || [],
-          day_1: body.weeklyPlan[1] || [],
-          day_2: body.weeklyPlan[2] || [],
-          day_3: body.weeklyPlan[3] || [],
-          day_4: body.weeklyPlan[4] || [],
-          day_5: body.weeklyPlan[5] || [],
-          day_6: body.weeklyPlan[6] || [],
-          updated_at: new Date().toISOString(),
-        })
-    }
 
     return NextResponse.json({ success: true })
   } catch (error) {
