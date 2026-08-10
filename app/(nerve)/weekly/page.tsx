@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { ChevronLeft, ChevronRight, Plus, Zap, GripVertical, Sparkles } from "lucide-react"
+import { ChevronLeft, ChevronRight, Plus, Zap, GripVertical, Sparkles, Loader2, BrainCircuit, AlertTriangle } from "lucide-react"
 import { PriorityBadge, SectionHeader } from "@/components/nerve/ui"
 import { useNerveStore } from "@/lib/nerve-store"
 import { type Task } from "@/lib/nerve-data"
@@ -69,6 +69,10 @@ export default function WeeklyPlannerPage() {
   const { tasks, projects, goals, updateTask, updateTasks, toggleTaskComplete } = useNerveStore()
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()))
   const [previewTasks, setPreviewTasks] = useState<Task[] | null>(null)
+  const [isAiPlanning, setIsAiPlanning] = useState(false)
+  const [aiGenerated, setAiGenerated] = useState(false)
+  const [aiReasoning, setAiReasoning] = useState<string>("")
+  const [aiError, setAiError] = useState<string>("")
 
   const currentTasks = previewTasks ?? tasks
   
@@ -284,16 +288,104 @@ export default function WeeklyPlannerPage() {
 
   const handleCancelPreview = () => {
     setPreviewTasks(null)
+    setAiGenerated(false)
+    setAiReasoning("")
+    setAiError("")
   }
 
   const handleRegeneratePreview = () => {
-    autoPlanWeek()
+    autoPlanWeekAI()
   }
 
   const handleAcceptPreview = () => {
     if (!previewTasks) return
     updateTasks(previewTasks)
     setPreviewTasks(null)
+    setAiGenerated(false)
+    setAiReasoning("")
+    setAiError("")
+  }
+
+  const autoPlanWeekAI = async () => {
+    setIsAiPlanning(true)
+    setAiError("")
+
+    // Load daily capacities from localStorage
+    let dailyCapacities: Record<string, number> = { "Mon": 5, "Tue": 5, "Wed": 5, "Thu": 5, "Fri": 5, "Sat": 5, "Sun": 5 }
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("nerve_daily_capacities")
+      if (stored) {
+        try { dailyCapacities = JSON.parse(stored) } catch { /* ignore */ }
+      }
+    }
+
+    const weekDateKeys = weekDates.map((d) => formatDateKey(d))
+
+    // ALWAYS use original store `tasks` for the API call.
+    // Regenerate should always produce a fresh plan from the base state —
+    // never from the preview snapshot (which may have all tasks already scheduled).
+    const baseTasks = tasks.filter((t) => t.status !== "completed")
+    const hasUnscheduled = baseTasks.some((t) => !t.scheduledDate)
+
+    if (!hasUnscheduled) {
+      setAiError("No unscheduled tasks to plan — drag a task to the Unscheduled Pool first.")
+      setIsAiPlanning(false)
+      return
+    }
+
+    try {
+      const res = await fetch("/api/ai-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tasks: baseTasks,
+          goals,
+          projects,
+          weekDates: weekDateKeys,
+          dailyCapacities,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }))
+        throw new Error(err.error ?? `HTTP ${res.status}`)
+      }
+
+      const data = await res.json()
+
+      if (data.fallback) {
+        throw new Error(data.error ?? "Groq API error")
+      }
+
+      if (!data.assignments?.length) {
+        setAiError("AI found no tasks to schedule — all tasks may already be on the calendar.")
+        setIsAiPlanning(false)
+        return
+      }
+
+      // Apply AI assignments onto the BASE tasks (not preview), then set as new preview
+      const assignMap = new Map<string, string>(
+        data.assignments.map((a: { taskId: string; dateKey: string }) => [a.taskId, a.dateKey])
+      )
+
+      const updatedTasks = tasks.map((t) => {
+        if (assignMap.has(t.id)) {
+          return { ...t, scheduledDate: assignMap.get(t.id)! }
+        }
+        return t
+      })
+
+      setPreviewTasks(updatedTasks)
+      setAiGenerated(true)
+      setAiReasoning(data.reasoning ?? "")
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error"
+      setAiError(`AI planning failed (${msg}). Falling back to local algorithm.`)
+      autoPlanWeek()
+      setAiGenerated(false)
+    } finally {
+      setIsAiPlanning(false)
+    }
   }
 
   const handleToggleComplete = (taskId: string) => {
@@ -322,52 +414,76 @@ export default function WeeklyPlannerPage() {
         action={
           !previewTasks && (
             <button
-              onClick={autoPlanWeek}
-              disabled={unscheduledTasks.length === 0}
+              onClick={autoPlanWeekAI}
+              disabled={unscheduledTasks.length === 0 || isAiPlanning}
               className={cn(
                 "inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all border-0",
-                unscheduledTasks.length === 0
+                unscheduledTasks.length === 0 || isAiPlanning
                   ? "bg-slate-100 text-slate-400 cursor-not-allowed shadow-none"
                   : "bg-[#4F46E5] hover:bg-[#4338CA] text-white shadow-indigo-500/10 hover:scale-[1.02] active:scale-[0.98]"
               )}
-              title={unscheduledTasks.length === 0 ? "No unscheduled tasks available to plan" : "Automatically plan your week"}
+              title={unscheduledTasks.length === 0 ? "No unscheduled tasks available to plan" : "AI-powered weekly planning"}
             >
-              <Sparkles className="w-4 h-4" /> Plan My Week
+              {isAiPlanning ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> AI is planning...</>
+              ) : (
+                <><BrainCircuit className="w-4 h-4" /> Plan My Week</>  
+              )}
             </button>
           )
         }
       />
 
+      {aiError && (
+        <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl px-5 py-3 text-sm">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
+          <span>{aiError}</span>
+          <button onClick={() => setAiError("")} className="ml-auto text-amber-500 hover:text-amber-700 font-bold text-xs cursor-pointer border-0 bg-transparent">✕</button>
+        </div>
+      )}
+
       {previewTasks && (
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl p-5 shadow-lg flex flex-col md:flex-row items-center justify-between gap-4">
-          <div>
-            <h3 className="font-bold text-lg flex items-center gap-1.5">
-              <Sparkles className="w-5 h-5 animate-pulse" /> AI Planner Preview
-            </h3>
-            <p className="text-sm text-blue-100 mt-0.5">
-              Unscheduled tasks distributed across the week. Drag tasks to edit, or accept/cancel the plan.
-            </p>
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl p-5 shadow-lg flex flex-col gap-4">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <h3 className="font-bold text-lg flex items-center gap-2">
+                {aiGenerated ? (
+                  <><BrainCircuit className="w-5 h-5" /> <span>AI Weekly Plan Preview</span> <span className="text-xs font-semibold bg-white/20 px-2 py-0.5 rounded-full">⚡ AI-generated</span></>
+                ) : (
+                  <><Sparkles className="w-5 h-5 animate-pulse" /> Planner Preview</>
+                )}
+              </h3>
+              <p className="text-sm text-blue-100 mt-0.5">
+                Drag tasks to adjust, then accept or regenerate.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={handleCancelPreview}
+                className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all border-0 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRegeneratePreview}
+                disabled={isAiPlanning}
+                className="bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all border-0 cursor-pointer flex items-center gap-1.5"
+              >
+                {isAiPlanning ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Regenerating...</> : "Regenerate"}
+              </button>
+              <button
+                onClick={handleAcceptPreview}
+                className="bg-white text-blue-600 hover:bg-blue-50 px-5 py-2 rounded-xl text-sm font-bold transition-all shadow-md border-0 cursor-pointer"
+              >
+                Accept Plan
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              onClick={handleCancelPreview}
-              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all border-0 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleRegeneratePreview}
-              className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all border-0 cursor-pointer"
-            >
-              Regenerate
-            </button>
-            <button
-              onClick={handleAcceptPreview}
-              className="bg-white text-blue-600 hover:bg-blue-50 px-5 py-2 rounded-xl text-sm font-bold transition-all shadow-md border-0 cursor-pointer"
-            >
-              Accept Plan
-            </button>
-          </div>
+          {aiReasoning && (
+            <div className="bg-white/10 rounded-xl px-4 py-3 text-sm text-blue-50 border border-white/10">
+              <span className="font-semibold text-white">AI Strategy: </span>{aiReasoning}
+            </div>
+          )}
         </div>
       )}
 
