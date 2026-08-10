@@ -24,6 +24,13 @@ interface NerveStoreContextType {
   username: string | null
   displayName: string | null
   pendingMilestone: Milestone | null
+  notificationSettings: {
+    morningEnabled: boolean
+    morningTime: string
+    eveningEnabled: boolean
+    eveningTime: string
+    timezone: string
+  }
   clearPendingMilestone: () => void
   toggleTaskComplete: (taskId: string) => void
   updateTask: (task: Task) => void
@@ -38,6 +45,13 @@ interface NerveStoreContextType {
   redeemReward: (rewardId: string) => void
   updateMilestone: (milestone: Milestone) => void
   deleteMilestone: (milestoneId: string) => void
+  updateNotificationSettings: (settings: {
+    morningEnabled: boolean
+    morningTime: string
+    eveningEnabled: boolean
+    eveningTime: string
+    timezone: string
+  }) => void
   setDailyPlan: (plan: Record<string, string[]>) => void
   setWeeklyPlan: (plan: Record<number, string[]>) => void
   logout: () => void
@@ -68,6 +82,13 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   const [pendingMilestone, setPendingMilestone] = useState<Milestone | null>(null)
   const [userXp, setUserXp] = useState(0)
   const [streak, setStreak] = useState(0)
+  const [notificationSettings, setNotificationSettings] = useState({
+    morningEnabled: false,
+    morningTime: "08:00",
+    eveningEnabled: false,
+    eveningTime: "20:00",
+    timezone: "UTC"
+  })
 
   // 1. Monitor local user session and route redirection
   useEffect(() => {
@@ -145,6 +166,9 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           setMilestones(data.milestones ?? [])
           setUserXp(data.userXp ?? 0)
           setStreak(data.streak ?? 0)
+          if (data.notificationSettings) {
+            setNotificationSettings(data.notificationSettings)
+          }
 
           if (hasRollover) {
             persist(
@@ -153,7 +177,9 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
               rolledTasks,
               data.rewards ?? [],
               data.userXp ?? 0,
-              data.streak ?? 0
+              data.streak ?? 0,
+              data.milestones ?? [],
+              data.notificationSettings ?? notificationSettings
             )
           }
         }
@@ -211,7 +237,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     nextRewards: Reward[],
     nextXp: number,
     nextStreak: number,
-    nextMilestones?: Milestone[]
+    nextMilestones?: Milestone[],
+    nextSettings?: typeof notificationSettings
   ) => {
     if (!userId) return
     try {
@@ -226,6 +253,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           milestones: nextMilestones ?? milestones,
           userXp: nextXp,
           streak: nextStreak,
+          notificationSettings: nextSettings ?? notificationSettings
         }),
       })
     } catch (e) {
@@ -293,7 +321,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     newRewards: Reward[] = rewards,
     newXp: number = userXp,
     newStreak: number = streak,
-    newMilestones: Milestone[] = milestones
+    newMilestones: Milestone[] = milestones,
+    newSettings: typeof notificationSettings = notificationSettings
   ) => {
     const { updatedGoals, updatedProjects } = recalculateData(newTasks, newGoals, newProjects)
     
@@ -302,10 +331,11 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     setProjects(updatedProjects)
     setRewards(newRewards)
     setMilestones(newMilestones)
+    setNotificationSettings(newSettings)
     setUserXp(newXp)
     setStreak(newStreak)
 
-    persist(updatedProjects, updatedGoals, newTasks, newRewards, newXp, newStreak, newMilestones)
+    persist(updatedProjects, updatedGoals, newTasks, newRewards, newXp, newStreak, newMilestones, newSettings)
   }
 
   // Planners setters (backward compatibility)
@@ -481,6 +511,10 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     updateStore(tasks, goals, projects, rewards, userXp, streak, nextMilestones)
   }
 
+  const updateNotificationSettings = (settings: typeof notificationSettings) => {
+    updateStore(tasks, goals, projects, rewards, userXp, streak, milestones, settings)
+  }
+
   const updateReward = (reward: Reward) => {
     const exists = rewards.some((r) => r.id === reward.id)
     const nextRewards = exists ? rewards.map((r) => (r.id === reward.id ? reward : r)) : [reward, ...rewards]
@@ -535,6 +569,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         username,
         displayName,
         pendingMilestone,
+        notificationSettings,
         clearPendingMilestone: () => setPendingMilestone(null),
         toggleTaskComplete,
         updateTask,
@@ -549,6 +584,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         redeemReward,
         updateMilestone,
         deleteMilestone,
+        updateNotificationSettings,
         setDailyPlan,
         setWeeklyPlan,
         logout,

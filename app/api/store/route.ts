@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     // 1. Load User Profile Stats (XP & Streak)
     const { data: userProfile } = await supabase
       .from("users")
-      .select("user_xp, streak")
+      .select("user_xp, streak, notification_settings")
       .eq("id", userId)
       .maybeSingle()
 
@@ -112,6 +112,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       userXp: userProfile?.user_xp ?? 0,
       streak: userProfile?.streak ?? 0,
+      notificationSettings: userProfile?.notification_settings || null,
       projects,
       goals,
       tasks,
@@ -138,12 +139,13 @@ export async function POST(request: Request) {
 
     const body = await request.json()
 
-    // 1. Update user profile stats (XP & Streak)
+    // 1. Update user profile stats (XP & Streak) & settings
     await supabase
       .from("users")
       .update({
         user_xp: body.userXp ?? 0,
         streak: body.streak ?? 0,
+        notification_settings: body.notificationSettings ?? {},
       })
       .eq("id", userId)
 

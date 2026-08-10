@@ -1,10 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { User, Palette, Gift, Zap, Bell, CalendarDays, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SectionHeader } from "@/components/nerve/ui"
 import { cn } from "@/lib/utils"
+import { useNerveStore } from "@/lib/nerve-store"
 
 const SETTINGS_SECTIONS = [
   { id: "profile", label: "Profile", icon: User },
@@ -50,7 +51,79 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export default function SettingsPage() {
+  const { userId, notificationSettings, updateNotificationSettings } = useNerveStore()
+  
   const [activeSection, setActiveSection] = useState("profile")
+  const [permission, setPermission] = useState<string>("default")
+  const [subscribing, setSubscribing] = useState(false)
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setPermission(Notification.permission)
+    }
+  }, [])
+
+  const subscribeToPush = async () => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+      alert("Browser push notifications are not supported in this browser.")
+      return
+    }
+
+    setSubscribing(true)
+    try {
+      const permissionResult = await Notification.requestPermission()
+      setPermission(permissionResult)
+      if (permissionResult !== "granted") {
+        throw new Error("Permission not granted")
+      }
+
+      const reg = await navigator.serviceWorker.register("/sw.js")
+      const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+      if (!vapidKey) {
+        throw new Error("VAPID public key is missing in environment variables.")
+      }
+
+      const padding = "=".repeat((4 - (vapidKey.length % 4)) % 4)
+      const base64 = (vapidKey + padding).replace(/\-/g, "+").replace(/_/g, "/")
+      const rawData = window.atob(base64)
+      const outputArray = new Uint8Array(rawData.length)
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i)
+      }
+
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: outputArray
+      })
+
+      const res = await fetch("/api/notifications/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          subscription: sub
+        })
+      })
+
+      if (!res.ok) {
+        throw new Error("Failed to store subscription on server")
+      }
+
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      updateNotificationSettings({
+        ...notificationSettings,
+        timezone: userTimezone
+      })
+
+      alert("Successfully enabled browser push notifications!")
+    } catch (e: any) {
+      console.error("Push subscription error:", e)
+      alert("Error enabling notifications: " + e.message)
+    } finally {
+      setSubscribing(false)
+    }
+  }
+
   const [selectedTheme, setSelectedTheme] = useState("dark")
   const [selectedAccent, setSelectedAccent] = useState("blue")
   const [name, setName] = useState("Alex")
@@ -216,28 +289,101 @@ export default function SettingsPage() {
 
       case "notifications":
         return (
-          <div className="space-y-1">
-            {(Object.entries(notifications) as [keyof typeof notifications, boolean][]).map(([key, val]) => {
-              const labels: Record<string, { label: string; sub: string }> = {
-                focusReminders: { label: "Focus Reminders", sub: "Get nudged when it's time to start a session" },
-                dailySummary: { label: "Daily Summary", sub: "End-of-day recap of what you accomplished" },
-                streakAlerts: { label: "Streak Alerts", sub: "Don't miss your daily streak" },
-                xpUpdates: { label: "XP Updates", sub: "Notifications when you level up or unlock rewards" },
-                weeklyReport: { label: "Weekly Report", sub: "A summary of your week every Sunday" },
-              }
-              return (
-                <div key={key} className="flex items-center justify-between py-4 border-b border-slate-200">
-                  <div>
-                    <p className="text-sm font-semibold text-[#0F172A]">{labels[key].label}</p>
-                    <p className="text-xs text-[#64748B] mt-0.5">{labels[key].sub}</p>
-                  </div>
-                  <Toggle
-                    checked={val}
-                    onChange={(v) => setNotifications((n) => ({ ...n, [key]: v }))}
-                  />
+          <div className="space-y-5">
+            {/* Permission Control */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-[#0F172A]">Browser Push Notifications</p>
+                  <p className="text-xs text-[#64748B] mt-0.5">
+                    {permission === "granted"
+                      ? "✓ Active and receiving planner summaries."
+                      : permission === "denied"
+                      ? "❌ Blocked in browser. Reset browser settings to enable."
+                      : "Not active. Enable to receive daily push updates."}
+                  </p>
                 </div>
-              )
-            })}
+                {permission !== "granted" && (
+                  <Button
+                    onClick={subscribeToPush}
+                    disabled={subscribing}
+                    className="nerve-gradient-blue text-white border-0 rounded-lg text-xs font-semibold hover:opacity-90 px-3.5 py-2"
+                  >
+                    {subscribing ? "Enabling..." : "Enable Pushes"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Morning Plan Notification */}
+            <div className="flex items-center justify-between py-4 border-b border-slate-200">
+              <div>
+                <p className="text-sm font-semibold text-[#0F172A]">Morning Plan Notification</p>
+                <p className="text-xs text-[#64748B] mt-0.5">Receive today's scheduled tasks and priority tasks count</p>
+              </div>
+              <Toggle
+                checked={notificationSettings.morningEnabled}
+                onChange={(v) => {
+                  updateNotificationSettings({
+                    ...notificationSettings,
+                    morningEnabled: v,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                  })
+                }}
+              />
+            </div>
+            {notificationSettings.morningEnabled && (
+              <div className="pb-4 border-b border-slate-200">
+                <label className="text-xs font-medium text-[#64748B] uppercase tracking-wider mb-2 block">Morning Time</label>
+                <input
+                  type="time"
+                  value={notificationSettings.morningTime}
+                  onChange={(e) => {
+                    updateNotificationSettings({
+                      ...notificationSettings,
+                      morningTime: e.target.value,
+                      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    })
+                  }}
+                  className="w-32 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm text-[#0F172A] outline-none focus:border-[#2563EB]/50"
+                />
+              </div>
+            )}
+
+            {/* Evening Progress Notification */}
+            <div className="flex items-center justify-between py-4 border-b border-slate-200">
+              <div>
+                <p className="text-sm font-semibold text-[#0F172A]">Evening Progress Notification</p>
+                <p className="text-xs text-[#64748B] mt-0.5">Receive completed count and remaining tasks summary</p>
+              </div>
+              <Toggle
+                checked={notificationSettings.eveningEnabled}
+                onChange={(v) => {
+                  updateNotificationSettings({
+                    ...notificationSettings,
+                    eveningEnabled: v,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                  })
+                }}
+              />
+            </div>
+            {notificationSettings.eveningEnabled && (
+              <div className="pb-4 border-b border-slate-200">
+                <label className="text-xs font-medium text-[#64748B] uppercase tracking-wider mb-2 block">Evening Time</label>
+                <input
+                  type="time"
+                  value={notificationSettings.eveningTime}
+                  onChange={(e) => {
+                    updateNotificationSettings({
+                      ...notificationSettings,
+                      eveningTime: e.target.value,
+                      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    })
+                  }}
+                  className="w-32 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm text-[#0F172A] outline-none focus:border-[#2563EB]/50"
+                />
+              </div>
+            )}
           </div>
         )
 
