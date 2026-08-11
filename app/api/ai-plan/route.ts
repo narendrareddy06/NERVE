@@ -341,6 +341,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "openai/gpt-oss-120b",
+        response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: "Generate the optimal weekly plan for these tasks. Respond with ONLY the JSON object — no explanation, no markdown, no backticks." },
