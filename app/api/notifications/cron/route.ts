@@ -2,13 +2,6 @@ import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabase"
 import webpush from "web-push"
 
-// Configure VAPID details
-webpush.setVapidDetails(
-  process.env.VAPID_SUBJECT || "mailto:admin@nerve.app",
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "",
-  process.env.VAPID_PRIVATE_KEY || ""
-)
-
 const PRIO_WEIGHT: Record<string, number> = {
   critical: 4,
   high: 3,
@@ -18,6 +11,21 @@ const PRIO_WEIGHT: Record<string, number> = {
 
 export async function GET(request: Request) {
   try {
+    const subject = process.env.VAPID_SUBJECT
+    const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    const privateKey = process.env.VAPID_PRIVATE_KEY
+
+    if (!subject || !publicKey || !privateKey) {
+      console.warn("Push notifications cron aborted: VAPID environment variables are not configured.")
+      return NextResponse.json(
+        { error: "VAPID environment variables are not configured" },
+        { status: 500 }
+      )
+    }
+
+    // Configure VAPID details on-demand inside the handler
+    webpush.setVapidDetails(subject, publicKey, privateKey)
+
     // Basic verification token (optional, but good practice to check if it's vercel CRON)
     const { searchParams } = new URL(request.url)
     const secret = searchParams.get("secret")
