@@ -344,10 +344,10 @@ export async function POST(req: NextRequest) {
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: "Generate the optimal weekly plan for these tasks. Respond with ONLY the JSON object — no explanation, no markdown, no backticks." },
+          { role: "user", content: "Generate the optimal weekly plan. Keep your internal reasoning under 100 words, then output the JSON object." },
         ],
         temperature: 0.2,
-        max_tokens: 2048,
+        max_tokens: 4096,
       }),
     })
   } catch (networkErr) {
