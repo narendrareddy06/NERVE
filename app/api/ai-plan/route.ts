@@ -100,10 +100,19 @@ function validateAssignments(
   rawAssignments: AIPlanAssignment[],
   tasks: TaskInput[],
   weekDates: string[],
-  dailyCapacities: Record<string, number>
+  dailyCapacities: Record<string, number>,
+  todayDateKey?: string
 ): Map<string, string> {
   const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
   const MAX_TASKS_PER_DAY = 4
+
+  let firstEligibleDayIdx = 0
+  if (todayDateKey) {
+    const idx = weekDates.indexOf(todayDateKey)
+    if (idx !== -1) {
+      firstEligibleDayIdx = idx
+    }
+  }
 
   // Build per-day workload tracker — pre-seeded with EXISTING scheduled tasks
   const dayStats = weekDates.map((dateKey, i) => ({
@@ -137,10 +146,11 @@ function validateAssignments(
 
   /** Find the best available day for a task of `duration` minutes, starting from `startIdx` */
   function findBestDay(duration: number, startIdx = 0): number {
+    const minStartIdx = Math.max(startIdx, firstEligibleDayIdx)
     // First pass: strict (task count + time)
     let bestIdx = -1
     let leastLoaded = Infinity
-    for (let i = startIdx; i < dayStats.length; i++) {
+    for (let i = minStartIdx; i < dayStats.length; i++) {
       const d = dayStats[i]
       if (d.taskCount >= MAX_TASKS_PER_DAY) continue
       if (d.minutes + duration > d.maxMinutes) continue
@@ -150,7 +160,7 @@ function validateAssignments(
 
     // Second pass: relaxed (task count only — ignore time cap)
     leastLoaded = Infinity
-    for (let i = startIdx; i < dayStats.length; i++) {
+    for (let i = minStartIdx; i < dayStats.length; i++) {
       const d = dayStats[i]
       if (d.taskCount >= MAX_TASKS_PER_DAY) continue
       if (d.minutes < leastLoaded) { leastLoaded = d.minutes; bestIdx = i }
@@ -169,9 +179,10 @@ function validateAssignments(
 
     // Resolve AI's chosen day index — snap to week if AI chose an out-of-week date
     let dayIdx = weekDates.indexOf(dateKey)
-    if (dayIdx === -1) {
-      console.log(`[ai-plan] AI chose out-of-week date ${dateKey} for "${task.title}" — finding best slot`)
-      dayIdx = findBestDay(duration, 0)
+    const isPast = todayDateKey && dateKey < todayDateKey
+    if (dayIdx === -1 || isPast) {
+      console.log(`[ai-plan] AI chose invalid or past date ${dateKey} for "${task.title}" — finding best slot`)
+      dayIdx = findBestDay(duration, firstEligibleDayIdx)
       if (dayIdx === -1) {
         console.log(`[ai-plan] No slot available for "${task.title}" — skipping`)
         continue
@@ -200,8 +211,9 @@ function validateAssignments(
 
     // --- Capacity check: try AI's chosen day; if full, find a better one ---
     const chosenDay = dayStats[dayIdx]
-    if (chosenDay.taskCount >= MAX_TASKS_PER_DAY || chosenDay.minutes + duration > chosenDay.maxMinutes) {
-      const altIdx = findBestDay(duration, 0)
+    const isChosenDayPast = todayDateKey && chosenDay.dateKey < todayDateKey
+    if (isChosenDayPast || chosenDay.taskCount >= MAX_TASKS_PER_DAY || chosenDay.minutes + duration > chosenDay.maxMinutes) {
+      const altIdx = findBestDay(duration, firstEligibleDayIdx)
       if (altIdx === -1) {
         console.log(`[ai-plan] No available slot for "${task.title}" after relaxed search — skipping`)
         continue
@@ -225,7 +237,8 @@ function buildSystemPrompt(
   goals: GoalInput[],
   projects: ProjectInput[],
   weekDates: string[],
-  dailyCapacities: Record<string, number>
+  dailyCapacities: Record<string, number>,
+  todayDateKey?: string
 ): string {
   const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -253,7 +266,13 @@ function buildSystemPrompt(
     .join("\n") || "  (none — all tasks already scheduled)"
 
   const capacityLines = weekDates
-    .map((d, i) => `  ${d} (${DAY_LABELS[i]}): max ${dailyCapacities[DAY_LABELS[i]] ?? 5}h, max 4 tasks`)
+    .map((d, i) => {
+      const dayName = DAY_LABELS[i]
+      const capacityHours = dailyCapacities[dayName] ?? 5
+      const isPast = todayDateKey && d < todayDateKey
+      const suffix = isPast ? " (PAST DAY - ALREADY COMPLETED - CANNOT SCHEDULE ANY TASKS ON THIS DAY)" : ""
+      return `  ${d} (${dayName}): max ${capacityHours}h, max 4 tasks${suffix}`
+    })
     .join("\n")
 
   return `You are NERVE's AI weekly planner. Your job is to schedule the UNSCHEDULED TASKS across the week — respecting capacity, dependencies, and priorities.
@@ -266,6 +285,7 @@ function buildSystemPrompt(
 5. Tasks with urgent deadlines (within 7 days) must be prioritised earlier in the week.
 6. Critical priority > high > medium > low.
 7. It is acceptable to leave a task unscheduled if there is genuinely no capacity.
+8. Never schedule any tasks on past days of the current week (marked with PAST DAY). Only schedule on current and future days.
 
 ## WEEK DATES (Mon-Sun)
 ${weekDates.map((d, i) => `  Day ${i} = ${d} (${DAY_LABELS[i]})`).join("\n")}
@@ -328,7 +348,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
   }
 
-  const systemPrompt = buildSystemPrompt(tasks, goals, projects, weekDates, dailyCapacities)
+  const systemPrompt = buildSystemPrompt(tasks, goals, projects, weekDates, dailyCapacities, body.todayDateKey)
 
   // Call Groq
   let groqResponse: Response
@@ -390,7 +410,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate and enforce NERVE's own rules on top of AI output
-  const validatedMap = validateAssignments(rawAssignments, tasks, weekDates, dailyCapacities)
+  const validatedMap = validateAssignments(rawAssignments, tasks, weekDates, dailyCapacities, body.todayDateKey)
 
   const finalAssignments = Array.from(validatedMap.entries()).map(([taskId, dateKey]) => ({
     taskId,

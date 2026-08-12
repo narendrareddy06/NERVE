@@ -150,6 +150,12 @@ export default function WeeklyPlannerPage() {
   }
 
   const autoPlanWeek = () => {
+    const todayD = new Date()
+    const yyyy = todayD.getFullYear()
+    const mm = String(todayD.getMonth() + 1).padStart(2, "0")
+    const dd = String(todayD.getDate()).padStart(2, "0")
+    const localTodayStr = `${yyyy}-${mm}-${dd}`
+
     // 1. Get all active, unscheduled tasks
     const activeUnscheduled = tasks.filter((t) => !t.scheduledDate && t.status !== "completed")
     if (activeUnscheduled.length === 0) return
@@ -262,6 +268,10 @@ export default function WeeklyPlannerPage() {
 
       for (let i = earliestDayIdx; i < dayWorkloads.length; i++) {
         const day = dayWorkloads[i]
+
+        // Skip past days in the current week (already completed)
+        if (day.dateKey < localTodayStr) continue
+
         const fitsTasks = day.taskCount < MAX_TASKS_PER_DAY
         const fitsMinutes = day.minutes + duration <= day.maxMinutes
 
@@ -343,6 +353,7 @@ export default function WeeklyPlannerPage() {
           projects,
           weekDates: weekDateKeys,
           dailyCapacities,
+          todayDateKey: todayStr,
         }),
       })
 
