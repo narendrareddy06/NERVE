@@ -324,7 +324,7 @@ export default function TasksPage() {
             >
               <div className="flex items-start gap-3">
                 {/* Drag handle */}
-                <div className="mt-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab text-[#64748B]">
+                <div className="mt-1 hidden md:block opacity-0 group-hover:opacity-100 transition-opacity cursor-grab text-[#64748B]">
                   <GripVertical className="w-4 h-4" />
                 </div>
 
@@ -382,7 +382,7 @@ export default function TasksPage() {
                       <div className="relative">
                         <button
                           onClick={() => setMenuOpen(menuOpen === task.id ? null : task.id)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100"
+                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-slate-100 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
                         >
                           <MoreHorizontal className="w-4 h-4" />
                         </button>
@@ -431,11 +431,28 @@ export default function TasksPage() {
                     )}
                     <PriorityBadge priority={task.priority} />
                   </div>
+
+                  {/* Mobile Quick actions */}
+                  {!isCompleted && (
+                    <div className="flex md:hidden items-center gap-2 mt-3 pt-2 border-t border-slate-100">
+                      <Link href="/focus" onClick={() => quickStart(task.id)} className="flex-1">
+                        <button className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20 text-xs font-semibold hover:bg-[#2563EB]/20 transition-all">
+                          <PlayCircle className="w-3.5 h-3.5" /> Focus
+                        </button>
+                      </Link>
+                      <button
+                        onClick={() => toggleComplete(task.id)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/20 text-xs font-semibold hover:bg-[#10B981]/20 transition-all"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Done
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Quick actions */}
                 {!isCompleted && (
-                  <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
+                  <div className="hidden md:flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
                     <Link href="/focus" onClick={() => quickStart(task.id)}>
                       <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20 text-xs font-medium hover:bg-[#2563EB]/20 transition-all">
                         <PlayCircle className="w-3.5 h-3.5" /> Focus

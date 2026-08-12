@@ -287,7 +287,7 @@ export default function FocusPage() {
   }
 
   return (
-    <div className="fixed inset-0 focus-bg flex flex-col z-30">
+    <div className="fixed inset-0 focus-bg flex flex-col z-30 overflow-y-auto pb-8">
       {/* Top bar */}
       <div className="flex items-center justify-between p-6">
         <div className="flex items-center gap-2">
@@ -302,7 +302,7 @@ export default function FocusPage() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 gap-8">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4 sm:gap-8 py-4">
         {/* Task */}
         <div className="text-center max-w-lg">
           <p className="text-xs font-semibold text-[#3B82F6] uppercase tracking-widest mb-3">Current Mission</p>
@@ -363,7 +363,7 @@ export default function FocusPage() {
         </div>
 
         {/* Timer ring */}
-        <div className="relative w-[320px] h-[320px] flex items-center justify-center">
+        <div className="relative w-[260px] h-[260px] sm:w-[320px] sm:h-[320px] shrink-0 flex items-center justify-center">
           {/* Outer glow */}
           <div
             className="absolute inset-0 rounded-full"

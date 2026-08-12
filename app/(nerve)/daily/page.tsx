@@ -102,6 +102,24 @@ export default function DailyPlannerPage() {
     setDragOver(null)
   }
 
+  const moveTaskDirectly = (taskId: string, to: string) => {
+    const targetTask = tasks.find((t) => t.id === taskId)
+    if (!targetTask) return
+
+    if (to === "unscheduled") {
+      updateTask({
+        ...targetTask,
+        scheduledBlock: undefined,
+      })
+    } else {
+      updateTask({
+        ...targetTask,
+        scheduledDate: dateStr,
+        scheduledBlock: to as any,
+      })
+    }
+  }
+
   const handleQuickAdd = (blockId: string) => {
     if (!quickAddText.trim()) { setQuickAddBlock(null); return }
     const newId = String(Date.now())
@@ -231,7 +249,25 @@ export default function DailyPlannerPage() {
                         onDragStart={() => handleDragStart(task.id, block.id)}
                         className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-grab hover:bg-slate-100 transition-all group"
                       >
-                        <GripVertical className="w-3.5 h-3.5 text-[#64748B]/50 shrink-0 cursor-grab" />
+                        {/* Mobile Dropdown Move Trigger */}
+                        <div className="relative md:hidden shrink-0 w-4 h-4 flex items-center justify-center">
+                          <select
+                            value={block.id}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              moveTaskDirectly(task.id, val)
+                            }}
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                          >
+                            <option value="unscheduled">Unscheduled</option>
+                            {BLOCKS.map((b) => (
+                              <option key={b.id} value={b.id}>Move to {b.label}</option>
+                            ))}
+                          </select>
+                          <GripVertical className="w-3.5 h-3.5 text-[#64748B]/60" />
+                        </div>
+                        {/* Desktop drag handle */}
+                        <GripVertical className="hidden md:block w-3.5 h-3.5 text-[#64748B]/50 shrink-0 cursor-grab" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-[#0F172A] truncate">{task.title}</p>
                           <div className="flex items-center gap-2 mt-0.5">
@@ -289,7 +325,27 @@ export default function DailyPlannerPage() {
                   onDragStart={() => handleDragStart(task.id, "unscheduled")}
                   className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5 cursor-grab hover:bg-slate-100 transition-all shadow-sm hover:shadow"
                 >
-                  <GripVertical className="w-3.5 h-3.5 text-[#64748B]/50 mt-0.5 shrink-0 cursor-grab" />
+                  {/* Mobile Dropdown Move Trigger */}
+                  <div className="relative md:hidden shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
+                    <select
+                      value="unscheduled"
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (val !== "unscheduled") {
+                          moveTaskDirectly(task.id, val)
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    >
+                      <option value="unscheduled">Unscheduled Pool</option>
+                      {BLOCKS.map((b) => (
+                        <option key={b.id} value={b.id}>Move to {b.label}</option>
+                      ))}
+                    </select>
+                    <GripVertical className="w-3.5 h-3.5 text-[#64748B]/60" />
+                  </div>
+                  {/* Desktop drag handle */}
+                  <GripVertical className="hidden md:block w-3.5 h-3.5 text-[#64748B]/50 mt-0.5 shrink-0 cursor-grab" />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">{task.title}</p>
                     <div className="flex items-center justify-between mt-2">

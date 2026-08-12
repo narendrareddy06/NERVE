@@ -149,6 +149,33 @@ export default function WeeklyPlannerPage() {
     setDragOver(null)
   }
 
+  const moveTaskDirectly = (taskId: string, to: number | "unscheduled") => {
+    const targetTask = currentTasks.find((t) => t.id === taskId)
+    if (!targetTask) return
+
+    let updatedTask: Task
+    if (to === "unscheduled") {
+      updatedTask = {
+        ...targetTask,
+        scheduledDate: undefined,
+        scheduledBlock: undefined,
+      }
+    } else {
+      const dateStr = formatDateKey(weekDates[to])
+      updatedTask = {
+        ...targetTask,
+        scheduledDate: dateStr,
+      }
+    }
+
+    if (previewTasks) {
+      const updated = previewTasks.map((t) => (t.id === taskId ? updatedTask : t))
+      setPreviewTasks(updated)
+    } else {
+      updateTask(updatedTask)
+    }
+  }
+
   const autoPlanWeek = () => {
     const todayD = new Date()
     const yyyy = todayD.getFullYear()
@@ -319,6 +346,12 @@ export default function WeeklyPlannerPage() {
   const autoPlanWeekAI = async () => {
     setIsAiPlanning(true)
     setAiError("")
+
+    const todayD = new Date()
+    const yyyy = todayD.getFullYear()
+    const mm = String(todayD.getMonth() + 1).padStart(2, "0")
+    const dd = String(todayD.getDate()).padStart(2, "0")
+    const todayStr = `${yyyy}-${mm}-${dd}`
 
     // Load daily capacities from localStorage
     let dailyCapacities: Record<string, number> = { "Mon": 5, "Tue": 5, "Wed": 5, "Thu": 5, "Fri": 5, "Sat": 5, "Sun": 5 }
@@ -517,7 +550,7 @@ export default function WeeklyPlannerPage() {
         
         {/* Main 7-Day Grid (3 Columns) */}
         <div className="lg:col-span-3 space-y-6">
-          <div className="grid grid-cols-7 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
             {DAYS.map((day, i) => {
               const date = weekDates[i]
               const dayTasks = weekPlan[i] ?? []
@@ -528,7 +561,7 @@ export default function WeeklyPlannerPage() {
                 <div
                   key={i}
                   className={cn(
-                    "bg-[#FFFFFF] border rounded-2xl p-3 min-h-[340px] flex flex-col transition-all duration-150",
+                    "bg-[#FFFFFF] border rounded-2xl p-3 min-h-[100px] md:min-h-[340px] flex flex-col transition-all duration-150",
                     todayActive ? "border-[#2563EB]/40 bg-blue-50/5" : "border-slate-200",
                     isDragTarget ? "bg-[#2563EB]/5 border-[#2563EB]/30 shadow-inner" : ""
                   )}
@@ -537,18 +570,20 @@ export default function WeeklyPlannerPage() {
                   onDrop={() => handleDrop(i)}
                 >
                   {/* Day Header */}
-                  <div className="mb-3 text-center">
-                    <p className={cn("text-xs font-semibold uppercase tracking-wider", todayActive ? "text-[#2563EB]" : "text-[#64748B]")}>
-                      {day}
-                    </p>
-                    <div className={cn(
-                      "w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mx-auto mt-1",
-                      todayActive ? "bg-[#2563EB] text-white" : "text-[#0F172A]"
-                    )}>
-                      {date.getDate()}
+                  <div className="mb-3 flex md:flex-col items-center justify-between md:justify-start md:text-center gap-2 border-b border-slate-100 md:border-b-0 pb-2 md:pb-0">
+                    <div className="flex md:flex-col items-center gap-2 md:gap-0">
+                      <p className={cn("text-xs font-bold uppercase tracking-wider", todayActive ? "text-[#2563EB]" : "text-[#64748B]")}>
+                        {day}
+                      </p>
+                      <div className={cn(
+                        "w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mt-0.5",
+                        todayActive ? "bg-[#2563EB] text-white" : "text-[#0F172A]"
+                      )}>
+                        {date.getDate()}
+                      </div>
                     </div>
                     {dayTasks.length > 0 && (
-                      <div className="flex items-center justify-center gap-1 mt-1.5">
+                      <div className="flex items-center gap-1 mt-0.5 md:mx-auto">
                         <Zap className="w-2.5 h-2.5 text-[#8B5CF6]" />
                         <span className="text-[10px] text-[#8B5CF6] font-semibold">
                           {dayTasks.reduce((s, t) => s + (t.status === "completed" ? 0 : t.xp), 0)}
@@ -576,7 +611,25 @@ export default function WeeklyPlannerPage() {
                             "bg-slate-50 border-slate-200 hover:bg-slate-100"
                           )}
                         >
-                          <GripVertical className="w-3 h-3 text-[#64748B]/40 mt-1 shrink-0 cursor-grab" />
+                          {/* Mobile Dropdown Move Trigger */}
+                          <div className="relative md:hidden shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
+                            <select
+                              value={i}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                moveTaskDirectly(task.id, val === "unscheduled" ? "unscheduled" : Number(val))
+                              }}
+                              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                            >
+                              <option value="unscheduled">Unscheduled</option>
+                              {DAYS.map((d, idx) => (
+                                <option key={idx} value={idx}>Move to {d}</option>
+                              ))}
+                            </select>
+                            <GripVertical className="w-3.5 h-3.5 text-[#64748B]/60" />
+                          </div>
+                          {/* Desktop drag handle */}
+                          <GripVertical className="hidden md:block w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab" />
                           
                           {/* Inline Checkbox to Complete Task */}
                           <div className="flex items-center shrink-0 mt-0.5">
@@ -689,7 +742,27 @@ export default function WeeklyPlannerPage() {
                     onDragStart={() => handleDragStart(task.id, "unscheduled")}
                     className="group flex items-start gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2.5 cursor-grab hover:bg-slate-100 transition-all shadow-sm hover:shadow"
                   >
-                    <GripVertical className="w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab" />
+                    {/* Mobile Dropdown Move Trigger */}
+                    <div className="relative md:hidden shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
+                      <select
+                        value="unscheduled"
+                        onChange={(e) => {
+                          const val = e.target.value
+                          if (val !== "unscheduled") {
+                            moveTaskDirectly(task.id, Number(val))
+                          }
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      >
+                        <option value="unscheduled">Unscheduled Pool</option>
+                        {DAYS.map((d, idx) => (
+                          <option key={idx} value={idx}>Move to {d}</option>
+                        ))}
+                      </select>
+                      <GripVertical className="w-3.5 h-3.5 text-[#64748B]/60" />
+                    </div>
+                    {/* Desktop drag handle */}
+                    <GripVertical className="hidden md:block w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab" />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">
                         {task.title}
