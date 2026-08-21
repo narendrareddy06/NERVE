@@ -611,25 +611,11 @@ export default function WeeklyPlannerPage() {
                             "bg-slate-50 border-slate-200 hover:bg-slate-100"
                           )}
                         >
-                          {/* Mobile Dropdown Move Trigger */}
-                          <div className="relative md:hidden shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
-                            <select
-                              value={i}
-                              onChange={(e) => {
-                                const val = e.target.value
-                                moveTaskDirectly(task.id, val === "unscheduled" ? "unscheduled" : Number(val))
-                              }}
-                              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                            >
-                              <option value="unscheduled">Unscheduled</option>
-                              {DAYS.map((d, idx) => (
-                                <option key={idx} value={idx}>Move to {d}</option>
-                              ))}
-                            </select>
-                            <GripVertical className="w-3.5 h-3.5 text-[#64748B]/60" />
-                          </div>
-                          {/* Desktop drag handle */}
-                          <GripVertical className="hidden md:block w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab" />
+                          {/* Grip handle for drag and drop (touchAction: "none" enables touch dragging on mobile via polyfill) */}
+                          <GripVertical 
+                            style={{ touchAction: "none" }}
+                            className="w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab active:cursor-grabbing" 
+                          />
                           
                           {/* Inline Checkbox to Complete Task */}
                           <div className="flex items-center shrink-0 mt-0.5">
@@ -742,27 +728,11 @@ export default function WeeklyPlannerPage() {
                     onDragStart={() => handleDragStart(task.id, "unscheduled")}
                     className="group flex items-start gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2.5 cursor-grab hover:bg-slate-100 transition-all shadow-sm hover:shadow"
                   >
-                    {/* Mobile Dropdown Move Trigger */}
-                    <div className="relative md:hidden shrink-0 mt-0.5 w-4 h-4 flex items-center justify-center">
-                      <select
-                        value="unscheduled"
-                        onChange={(e) => {
-                          const val = e.target.value
-                          if (val !== "unscheduled") {
-                            moveTaskDirectly(task.id, Number(val))
-                          }
-                        }}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      >
-                        <option value="unscheduled">Unscheduled Pool</option>
-                        {DAYS.map((d, idx) => (
-                          <option key={idx} value={idx}>Move to {d}</option>
-                        ))}
-                      </select>
-                      <GripVertical className="w-3.5 h-3.5 text-[#64748B]/60" />
-                    </div>
-                    {/* Desktop drag handle */}
-                    <GripVertical className="hidden md:block w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab" />
+                    {/* Grip handle for drag and drop (touchAction: "none" enables touch dragging on mobile via polyfill) */}
+                    <GripVertical 
+                      style={{ touchAction: "none" }}
+                      className="w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab active:cursor-grabbing" 
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">
                         {task.title}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState } from "react"
 import { Pause, Play, CheckCircle, SkipForward, X, Zap, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MOTIVATIONAL_QUOTES } from "@/lib/nerve-data"
@@ -15,18 +15,27 @@ function formatTime(seconds: number) {
 }
 
 export default function FocusPage() {
-  const { tasks, toggleTaskComplete, updateTask } = useNerveStore()
+  const {
+    tasks,
+    focusSecondsLeft,
+    focusTotalSeconds,
+    isFocusRunning,
+    setFocusSecondsLeft,
+    setFocusTotalSeconds,
+    startFocus,
+    pauseFocus,
+    resumeFocus,
+    resetFocus,
+    completeFocus,
+    switchFocusTask
+  } = useNerveStore()
+
   const focusTask = tasks.find((t) => t.status === "in-progress")
 
   const [selectedPreset, setSelectedPreset] = useState<'25m' | '45m' | '60m' | '90m' | 'custom'>('25m')
   const [customMinutes, setCustomMinutes] = useState('25')
-  const [totalSeconds, setTotalSeconds] = useState(25 * 60)
-  const [secondsLeft, setSecondsLeft] = useState(25 * 60)
-  const [running, setRunning] = useState(false)
   const [completed, setCompleted] = useState(false)
-  const [sessionSecondsWorked, setSessionSecondsWorked] = useState(0)
   const [quoteIndex] = useState(() => Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length))
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const getSessionSeconds = (p: string, customMin: string) => {
     if (p === 'custom') {
@@ -40,149 +49,32 @@ export default function FocusPage() {
   }
 
   const handlePresetChange = (p: typeof selectedPreset) => {
-    if (running) return
+    if (isFocusRunning) return
     setSelectedPreset(p)
     const secs = getSessionSeconds(p, customMinutes)
-    setTotalSeconds(secs)
-    setSecondsLeft(secs)
+    setFocusTotalSeconds(secs)
+    setFocusSecondsLeft(secs)
   }
 
   const handleCustomMinutesChange = (val: string) => {
-    if (running) return
+    if (isFocusRunning) return
     setCustomMinutes(val)
     const secs = getSessionSeconds('custom', val)
-    setTotalSeconds(secs)
-    setSecondsLeft(secs)
+    setFocusTotalSeconds(secs)
+    setFocusSecondsLeft(secs)
   }
 
-  const saveElapsedTimeToTask = (seconds: number) => {
-    if (seconds <= 0 || !focusTask) return
-    const currentTask = tasks.find((t) => t.id === focusTask.id)
-    if (!currentTask) return
-
-    const newActualTime = (currentTask.actualTime ?? 0) + seconds
-    updateTask({
-      ...currentTask,
-      actualTime: newActualTime,
-    })
-  }
-
-  // Ref sync for unmount cleanup
-  const focusTaskRef = useRef(focusTask)
-  const tasksRef = useRef(tasks)
-  const updateTaskRef = useRef(updateTask)
-  const sessionSecondsWorkedRef = useRef(0)
-
-  useEffect(() => { focusTaskRef.current = focusTask }, [focusTask])
-  useEffect(() => { tasksRef.current = tasks }, [tasks])
-  useEffect(() => { updateTaskRef.current = updateTask }, [updateTask])
-  useEffect(() => { sessionSecondsWorkedRef.current = sessionSecondsWorked }, [sessionSecondsWorked])
-
-  // Unmount cleanup to save any unsaved seconds
-  useEffect(() => {
-    return () => {
-      const currentFocusTask = focusTaskRef.current
-      if (sessionSecondsWorkedRef.current > 0 && currentFocusTask && updateTaskRef.current && tasksRef.current) {
-        const currentTask = tasksRef.current.find((t) => t.id === currentFocusTask.id)
-        if (currentTask) {
-          updateTaskRef.current({
-            ...currentTask,
-            actualTime: (currentTask.actualTime ?? 0) + sessionSecondsWorkedRef.current,
-          })
-        }
-      }
-    }
-  }, [])
-
-  // Timer Tick Interval
-  useEffect(() => {
-    if (running && secondsLeft > 0) {
-      intervalRef.current = setInterval(() => {
-        setSecondsLeft((s) => {
-          if (s <= 1) {
-            if (intervalRef.current) {
-              clearInterval(intervalRef.current)
-              intervalRef.current = null
-            }
-            setRunning(false)
-            setSessionSecondsWorked((w) => w + 1)
-            return 0
-          }
-          setSessionSecondsWorked((w) => w + 1)
-          return s - 1
-        })
-      }, 1000)
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
-    }
-  }, [running, secondsLeft])
-
-  // Save progress when paused
-  useEffect(() => {
-    if (!running && sessionSecondsWorked > 0) {
-      saveElapsedTimeToTask(sessionSecondsWorked)
-      setSessionSecondsWorked(0)
-    }
-  }, [running, sessionSecondsWorked])
-
-  const progress = ((totalSeconds - secondsLeft) / totalSeconds) * 100
+  const progress = ((focusTotalSeconds - focusSecondsLeft) / focusTotalSeconds) * 100
   const circumference = 2 * Math.PI * 140
 
-  const handleComplete = () => {
-    setRunning(false)
-    if (intervalRef.current) clearInterval(intervalRef.current)
-
-    // Save pending progress
-    if (sessionSecondsWorked > 0 && focusTask) {
-      const currentTask = tasks.find((t) => t.id === focusTask.id)
-      if (currentTask) {
-        updateTask({
-          ...currentTask,
-          actualTime: (currentTask.actualTime ?? 0) + sessionSecondsWorked,
-        })
-      }
-      setSessionSecondsWorked(0)
-    }
-
-    if (focusTask && focusTask.status !== "completed") {
-      toggleTaskComplete(focusTask.id)
-    }
+  const handleCompleteClick = () => {
+    completeFocus()
     setCompleted(true)
   }
 
-  const handleReset = () => {
-    setRunning(false)
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    setSecondsLeft(totalSeconds)
+  const handleResetClick = () => {
+    resetFocus()
     setCompleted(false)
-  }
-
-  const handleSwitchTask = () => {
-    setRunning(false)
-    if (intervalRef.current) clearInterval(intervalRef.current)
-
-    // Save pending progress
-    if (sessionSecondsWorked > 0 && focusTask) {
-      const currentTask = tasks.find((t) => t.id === focusTask.id)
-      if (currentTask) {
-        updateTask({
-          ...currentTask,
-          actualTime: (currentTask.actualTime ?? 0) + sessionSecondsWorked,
-        })
-      }
-      setSessionSecondsWorked(0)
-    }
-
-    if (focusTask) {
-      updateTask({
-        ...focusTask,
-        status: "todo",
-      })
-    }
   }
 
   // Render Selection Screen if no task is in-progress
@@ -237,7 +129,8 @@ export default function FocusPage() {
                   </div>
                   <button
                     onClick={() => {
-                      updateTask({ ...t, status: "in-progress" })
+                      const secs = getSessionSeconds(selectedPreset, customMinutes)
+                      startFocus(t.id, secs)
                     }}
                     className="flex items-center gap-1 px-3 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold rounded-xl border-0 cursor-pointer transition-all"
                   >
@@ -269,7 +162,7 @@ export default function FocusPage() {
           </div>
           <div className="flex items-center gap-3 justify-center">
             <Button
-              onClick={handleReset}
+              onClick={handleResetClick}
               variant="outline"
               className="border-white/[0.1] text-white bg-white/[0.05] rounded-xl hover:bg-white/[0.1]"
             >
@@ -322,7 +215,7 @@ export default function FocusPage() {
           </div>
           <div className="flex items-center justify-center gap-3 mt-3.5">
             <button
-              onClick={handleSwitchTask}
+              onClick={switchFocusTask}
               className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold rounded-xl border border-white/10 cursor-pointer transition-all"
             >
               Switch Task
@@ -335,11 +228,11 @@ export default function FocusPage() {
           {(["25m", "45m", "60m", "90m", "custom"] as const).map((p) => (
             <button
               key={p}
-              disabled={running}
+              disabled={isFocusRunning}
               onClick={() => handlePresetChange(p)}
               className={cn(
                 "px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition-all border cursor-pointer",
-                running && "opacity-45 cursor-not-allowed",
+                isFocusRunning && "opacity-45 cursor-not-allowed",
                 selectedPreset === p
                   ? "border-[#3B82F6]/30 bg-[#3B82F6]/10 text-white"
                   : "border-transparent text-[#71717A] hover:text-white"
@@ -354,7 +247,7 @@ export default function FocusPage() {
               min={1}
               max={1440}
               value={customMinutes}
-              disabled={running}
+              disabled={isFocusRunning}
               onChange={(e) => handleCustomMinutesChange(e.target.value)}
               className="w-14 bg-white/[0.05] border border-white/[0.1] rounded-lg text-center py-1 text-xs font-bold text-white focus:border-[#3B82F6]/50 outline-none placeholder:text-white/20"
               placeholder="Min"
@@ -368,7 +261,7 @@ export default function FocusPage() {
           <div
             className="absolute inset-0 rounded-full"
             style={{
-              background: running
+              background: isFocusRunning
                 ? "radial-gradient(circle, rgba(59,130,246,0.06) 0%, transparent 70%)"
                 : "radial-gradient(circle, rgba(59,130,246,0.03) 0%, transparent 70%)",
               transition: "background 1s ease",
@@ -400,7 +293,7 @@ export default function FocusPage() {
               strokeLinecap="round"
               strokeDasharray={circumference}
               strokeDashoffset={circumference * (1 - progress / 100)}
-              style={{ transition: running ? "stroke-dashoffset 1s linear" : "none" }}
+              style={{ transition: isFocusRunning ? "stroke-dashoffset 1s linear" : "none" }}
             />
             <defs>
               <linearGradient id="timerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -411,12 +304,12 @@ export default function FocusPage() {
           </svg>
 
           {/* Center */}
-          <div className={cn("text-center z-10", running && "pulse-ring")}>
+          <div className={cn("text-center z-10", isFocusRunning && "pulse-ring")}>
             <p className="text-6xl font-bold text-white tabular-nums tracking-tight leading-none">
-              {formatTime(secondsLeft)}
+              {formatTime(focusSecondsLeft)}
             </p>
             <p className="text-xs text-[#71717A] mt-2 uppercase tracking-widest">
-              {running ? "Deep Focus" : secondsLeft === totalSeconds ? "Ready" : "Paused"}
+              {isFocusRunning ? "Deep Focus" : focusSecondsLeft === focusTotalSeconds ? "Ready" : "Paused"}
             </p>
           </div>
         </div>
@@ -424,24 +317,24 @@ export default function FocusPage() {
         {/* Controls */}
         <div className="flex items-center gap-4">
           <button
-            onClick={handleReset}
+            onClick={handleResetClick}
             className="w-11 h-11 rounded-full bg-white/[0.05] border border-white/[0.1] flex items-center justify-center text-[#71717A] hover:text-white hover:bg-white/[0.1] transition-all"
           >
             <SkipForward className="w-4 h-4" />
           </button>
 
           <button
-            onClick={() => setRunning((r) => !r)}
+            onClick={() => isFocusRunning ? pauseFocus() : resumeFocus()}
             className="w-16 h-16 rounded-full nerve-gradient-blue flex items-center justify-center nerve-glow-blue hover:opacity-90 transition-opacity"
           >
-            {running
+            {isFocusRunning
               ? <Pause className="w-6 h-6 text-white fill-white" />
               : <Play className="w-6 h-6 text-white fill-white ml-0.5" />
             }
           </button>
 
           <button
-            onClick={handleComplete}
+            onClick={handleCompleteClick}
             className="w-11 h-11 rounded-full bg-[#10B981]/10 border border-[#10B981]/20 flex items-center justify-center text-[#10B981] hover:bg-[#10B981]/20 transition-all"
           >
             <CheckCircle className="w-4 h-4" />
@@ -462,7 +355,7 @@ export default function FocusPage() {
               key={i}
               className={cn(
                 "rounded-full transition-all duration-300",
-                i === 0 && running
+                i === 0 && isFocusRunning
                   ? "w-6 h-2 bg-[#3B82F6]"
                   : i === 0
                   ? "w-6 h-2 bg-white/20"
