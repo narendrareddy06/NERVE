@@ -1,11 +1,12 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Plus, Clock, Zap, GripVertical, ChevronLeft, ChevronRight } from "lucide-react"
+import { Plus, Clock, Zap, GripVertical, ChevronLeft, ChevronRight, CheckCircle2, Repeat } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PriorityBadge, SectionHeader } from "@/components/nerve/ui"
 import { useNerveStore } from "@/lib/nerve-store"
 import { type Task } from "@/lib/nerve-data"
+import { isTaskCompletedOnDate } from "@/lib/task-meta"
 import { cn } from "@/lib/utils"
 
 const BLOCKS = [
@@ -44,12 +45,13 @@ function formatDateKey(date: Date) {
 }
 
 export default function DailyPlannerPage() {
-  const { tasks, updateTask, projects } = useNerveStore()
+  const { tasks, updateTask, toggleTaskComplete, projects } = useNerveStore()
   const [date, setDate] = useState(new Date())
   const [dragging, setDragging] = useState<{ taskId: string; from: string | "unscheduled" } | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [quickAddBlock, setQuickAddBlock] = useState<string | null>(null)
   const [quickAddText, setQuickAddText] = useState("")
+  const [quickAddRecurring, setQuickAddRecurring] = useState(false)
 
   const prevDay = () => { const d = new Date(date); d.setDate(d.getDate() - 1); setDate(d) }
   const nextDay = () => { const d = new Date(date); d.setDate(d.getDate() + 1); setDate(d) }
@@ -61,7 +63,7 @@ export default function DailyPlannerPage() {
     const map: Record<string, Task[]> = {}
     BLOCKS.forEach((block) => {
       map[block.id] = tasks.filter(
-        (t) => t.scheduledDate === dateStr && t.scheduledBlock === block.id
+        (t) => (t.scheduledDate === dateStr || t.isRecurring) && t.scheduledBlock === block.id
       )
     })
     return map
@@ -70,7 +72,8 @@ export default function DailyPlannerPage() {
   // Unscheduled tasks for today: active tasks scheduled for today that are NOT in a block
   const unscheduled = useMemo(() => {
     return tasks.filter((t) => {
-      return t.scheduledDate === dateStr && t.status !== "completed" && !t.scheduledBlock
+      const isDone = isTaskCompletedOnDate(t, dateStr)
+      return (t.scheduledDate === dateStr || t.isRecurring) && !isDone && !t.scheduledBlock
     })
   }, [tasks, dateStr])
 
@@ -93,7 +96,7 @@ export default function DailyPlannerPage() {
     } else {
       updateTask({
         ...targetTask,
-        scheduledDate: dateStr,
+        scheduledDate: targetTask.isRecurring ? targetTask.scheduledDate : dateStr,
         scheduledBlock: to as any,
       })
     }
@@ -114,7 +117,7 @@ export default function DailyPlannerPage() {
     } else {
       updateTask({
         ...targetTask,
-        scheduledDate: dateStr,
+        scheduledDate: targetTask.isRecurring ? targetTask.scheduledDate : dateStr,
         scheduledBlock: to as any,
       })
     }
@@ -127,28 +130,34 @@ export default function DailyPlannerPage() {
     
     const newTask: Task = {
       id: newId,
-      title: quickAddText,
+      title: quickAddText.trim(),
       estimatedTime: "1h",
       priority: "medium",
       xp: 50,
       status: "todo",
       projectId: defaultProject.id,
       project: defaultProject.name,
-      scheduledDate: dateStr,
+      scheduledDate: quickAddRecurring ? undefined : dateStr,
       scheduledBlock: blockId as any,
+      isRecurring: quickAddRecurring,
+      recurringHistory: {},
     }
     
     updateTask(newTask)
     setQuickAddText("")
+    setQuickAddRecurring(false)
     setQuickAddBlock(null)
   }
 
   const todayAllTasks = useMemo(() => {
-    return tasks.filter((t) => t.scheduledDate === dateStr)
+    return tasks.filter((t) => t.scheduledDate === dateStr || t.isRecurring)
   }, [tasks, dateStr])
 
   const totalTasks = todayAllTasks.length
-  const totalXP = todayAllTasks.reduce((sum, t) => sum + (t.status === "completed" ? 0 : t.xp), 0)
+  const totalXP = todayAllTasks.reduce((sum, t) => {
+    const isDone = isTaskCompletedOnDate(t, dateStr)
+    return sum + (isDone ? 0 : t.xp)
+  }, 0)
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -214,24 +223,35 @@ export default function DailyPlannerPage() {
 
                 {/* Quick Add Input */}
                 {quickAddBlock === block.id && (
-                  <div className="mb-3 flex gap-2">
-                    <input
-                      autoFocus
-                      value={quickAddText}
-                      onChange={(e) => setQuickAddText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.nativeEvent.isComposing) handleQuickAdd(block.id)
-                        if (e.key === "Escape") { setQuickAddBlock(null); setQuickAddText("") }
-                      }}
-                      placeholder="Task name... (Enter to add)"
-                      className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B] outline-none focus:border-[#2563EB]/50"
-                    />
-                    <Button
-                      onClick={() => handleQuickAdd(block.id)}
-                      className="nerve-gradient-blue text-white border-0 rounded-xl px-4 text-sm font-semibold hover:opacity-90"
-                    >
-                      Add
-                    </Button>
+                  <div className="mb-3 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        autoFocus
+                        value={quickAddText}
+                        onChange={(e) => setQuickAddText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.nativeEvent.isComposing) handleQuickAdd(block.id)
+                          if (e.key === "Escape") { setQuickAddBlock(null); setQuickAddText("") }
+                        }}
+                        placeholder="Task name... (Enter to add)"
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B] outline-none focus:border-[#2563EB]/50"
+                      />
+                      <Button
+                        onClick={() => handleQuickAdd(block.id)}
+                        className="nerve-gradient-blue text-white border-0 rounded-xl px-4 text-sm font-semibold hover:opacity-90"
+                      >
+                        Add
+                      </Button>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-[#64748B] cursor-pointer pl-1">
+                      <input
+                        type="checkbox"
+                        checked={quickAddRecurring}
+                        onChange={(e) => setQuickAddRecurring(e.target.checked)}
+                        className="w-3.5 h-3.5 text-[#2563EB] rounded border-slate-300 focus:ring-[#2563EB] cursor-pointer"
+                      />
+                      <Repeat className="w-3 h-3 text-[#2563EB]" /> Repeat daily (appears every day)
+                    </label>
                   </div>
                 )}
 
@@ -242,20 +262,51 @@ export default function DailyPlannerPage() {
                   )}
                   {blockTasks.map((task) => {
                     const project = projects.find((p) => p.id === task.projectId)
+                    const isDone = isTaskCompletedOnDate(task, dateStr)
                     return (
                       <div
                         key={task.id}
                         draggable
                         onDragStart={() => handleDragStart(task.id, block.id)}
-                        className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-grab hover:bg-slate-100 transition-all group"
+                        className={cn(
+                          "flex items-center gap-3 bg-slate-50 border rounded-xl px-3 py-2.5 cursor-grab hover:bg-slate-100 transition-all group",
+                          isDone ? "border-emerald-200/60 bg-emerald-50/20 opacity-75" : "border-slate-200"
+                        )}
                       >
                         {/* Grip handle for drag and drop (touchAction: "none" enables touch dragging on mobile via polyfill) */}
                         <GripVertical 
                           style={{ touchAction: "none" }}
                           className="w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab active:cursor-grabbing" 
                         />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleTaskComplete(task.id, dateStr)
+                          }}
+                          className={cn(
+                            "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-all cursor-pointer",
+                            isDone
+                              ? "bg-[#10B981] border-[#10B981] text-white"
+                              : "border-slate-300 hover:border-[#2563EB]"
+                          )}
+                        >
+                          {isDone && <CheckCircle2 className="w-3.5 h-3.5" />}
+                        </button>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-[#0F172A] truncate">{task.title}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className={cn("text-sm font-medium truncate", isDone ? "line-through text-[#64748B]" : "text-[#0F172A]")}>
+                              {task.title}
+                            </p>
+                            {task.isRecurring && (
+                              <span
+                                title="Repeats Daily"
+                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1.5 py-0.2 rounded-md shrink-0"
+                              >
+                                <Repeat className="w-2.5 h-2.5" /> Daily
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-xs text-[#64748B] flex items-center gap-1">
                               <Clock className="w-2.5 h-2.5" />{task.estimatedTime}
@@ -317,7 +368,17 @@ export default function DailyPlannerPage() {
                     className="w-3.5 h-3.5 text-[#64748B]/40 mt-0.5 shrink-0 cursor-grab active:cursor-grabbing" 
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">{task.title}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-medium text-[#0F172A] leading-snug line-clamp-2">{task.title}</p>
+                      {task.isRecurring && (
+                        <span
+                          title="Repeats Daily"
+                          className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1 py-0.2 rounded shrink-0"
+                        >
+                          <Repeat className="w-2.5 h-2.5" /> Daily
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-[10px] text-[#64748B] flex items-center gap-1">
                         <Clock className="w-2.5 h-2.5" />{task.estimatedTime}

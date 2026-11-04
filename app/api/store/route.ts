@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabase"
+import { parseTaskNotes, serializeTaskNotes } from "@/lib/task-meta"
 
 // Helper to sync tables, matching deletes and upserts for data consistency
 async function syncTable(tableName: string, userId: string, items: any[], mapItem: (item: any) => any) {
@@ -65,21 +66,26 @@ export async function GET(request: Request) {
 
     // 4. Load Tasks
     const { data: dbTasks } = await supabase.from("tasks").select("*").eq("user_id", userId)
-    const tasks = (dbTasks || []).map((t) => ({
-      id: t.id,
-      projectId: t.project_id,
-      goalId: t.goal_id || undefined,
-      title: t.title,
-      estimatedTime: t.estimated_time,
-      priority: t.priority,
-      xp: t.xp,
-      status: t.status,
-      notes: t.notes,
-      scheduledDate: t.scheduled_date || undefined,
-      scheduledBlock: t.scheduled_block || undefined,
-      actualTime: t.actual_time || 0,
-      dependsOnTaskId: t.depends_on_task_id || undefined,
-    }))
+    const tasks = (dbTasks || []).map((t) => {
+      const { cleanNotes, meta } = parseTaskNotes(t.notes)
+      return {
+        id: t.id,
+        projectId: t.project_id,
+        goalId: t.goal_id || undefined,
+        title: t.title,
+        estimatedTime: t.estimated_time,
+        priority: t.priority,
+        xp: t.xp,
+        status: t.status,
+        notes: cleanNotes,
+        scheduledDate: t.scheduled_date || undefined,
+        scheduledBlock: t.scheduled_block || undefined,
+        actualTime: t.actual_time || 0,
+        dependsOnTaskId: t.depends_on_task_id || undefined,
+        isRecurring: t.is_recurring ?? meta.isRecurring ?? false,
+        recurringHistory: t.recurring_history ?? meta.recurringHistory ?? {},
+      }
+    })
 
     // 5. Load Rewards
     const { data: dbRewards } = await supabase.from("rewards").select("*").eq("user_id", userId)
@@ -181,7 +187,10 @@ export async function POST(request: Request) {
       priority: t.priority || "medium",
       xp: t.xp ?? 50,
       status: t.status || "todo",
-      notes: t.notes || "",
+      notes: serializeTaskNotes(t.notes, {
+        isRecurring: t.isRecurring,
+        recurringHistory: t.recurringHistory,
+      }),
       scheduled_date: t.scheduledDate || null,
       scheduled_block: t.scheduled_block || null,
       actual_time: t.actualTime || 0,

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { ChevronLeft, ChevronRight, Plus, Zap, GripVertical, Sparkles, Loader2, BrainCircuit, AlertTriangle } from "lucide-react"
+import { ChevronLeft, ChevronRight, Plus, Zap, GripVertical, Sparkles, Loader2, BrainCircuit, AlertTriangle, Repeat } from "lucide-react"
 import { PriorityBadge, SectionHeader } from "@/components/nerve/ui"
 import { useNerveStore } from "@/lib/nerve-store"
 import { type Task } from "@/lib/nerve-data"
@@ -102,14 +102,14 @@ export default function WeeklyPlannerPage() {
     const map: Record<number, Task[]> = {}
     weekDates.forEach((date, i) => {
       const dateStr = formatDateKey(date)
-      map[i] = currentTasks.filter((t) => t.scheduledDate === dateStr)
+      map[i] = currentTasks.filter((t) => t.scheduledDate === dateStr || t.isRecurring)
     })
     return map
   }, [currentTasks, weekDates])
 
   // Filter tasks that have not been scheduled yet
   const unscheduledTasks = useMemo(() => {
-    return currentTasks.filter((t) => !t.scheduledDate && t.status !== "completed")
+    return currentTasks.filter((t) => !t.scheduledDate && !t.isRecurring && t.status !== "completed")
   }, [currentTasks])
 
   const handleDragStart = (taskId: string, from: number | "unscheduled") => {
@@ -184,7 +184,7 @@ export default function WeeklyPlannerPage() {
     const localTodayStr = `${yyyy}-${mm}-${dd}`
 
     // 1. Get all active, unscheduled tasks
-    const activeUnscheduled = tasks.filter((t) => !t.scheduledDate && t.status !== "completed")
+    const activeUnscheduled = tasks.filter((t) => !t.scheduledDate && !t.isRecurring && t.status !== "completed")
     if (activeUnscheduled.length === 0) return
 
     // 2. Build map of goals by ID for quick deadline lookup
@@ -367,7 +367,7 @@ export default function WeeklyPlannerPage() {
     // ALWAYS use original store `tasks` for the API call.
     // Regenerate should always produce a fresh plan from the base state —
     // never from the preview snapshot (which may have all tasks already scheduled).
-    const baseTasks = tasks.filter((t) => t.status !== "completed")
+    const baseTasks = tasks.filter((t) => t.status !== "completed" && !t.isRecurring)
     const hasUnscheduled = baseTasks.some((t) => !t.scheduledDate)
 
     if (!hasUnscheduled) {
@@ -432,7 +432,7 @@ export default function WeeklyPlannerPage() {
     }
   }
 
-  const handleToggleComplete = (taskId: string) => {
+  const handleToggleComplete = (taskId: string, targetDate?: string) => {
     if (previewTasks) {
       const nextTasks = previewTasks.map((t) => {
         if (t.id === taskId) {
@@ -443,7 +443,7 @@ export default function WeeklyPlannerPage() {
       })
       setPreviewTasks(nextTasks)
     } else {
-      toggleTaskComplete(taskId)
+      toggleTaskComplete(taskId, targetDate)
     }
   }
 
@@ -596,7 +596,10 @@ export default function WeeklyPlannerPage() {
                   <div className="flex-1 space-y-1.5">
                     {dayTasks.map((task) => {
                       const project = projects.find((p) => p.id === task.projectId)
-                      const isCompleted = task.status === "completed"
+                      const dateStr = formatDateKey(date)
+                      const isCompleted = task.isRecurring
+                        ? Boolean(task.recurringHistory?.[dateStr])
+                        : task.status === "completed"
                       const isTentative = previewTasks && !tasks.find((t) => t.id === task.id)?.scheduledDate
                       
                       return (
@@ -620,9 +623,9 @@ export default function WeeklyPlannerPage() {
                           {/* Inline Checkbox to Complete Task */}
                           <div className="flex items-center shrink-0 mt-0.5">
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleToggleComplete(task.id) }}
+                              onClick={(e) => { e.stopPropagation(); handleToggleComplete(task.id, dateStr) }}
                               className={cn(
-                                "w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all",
+                                "w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all cursor-pointer",
                                 isCompleted
                                   ? "bg-emerald-500 border-emerald-500 text-white"
                                   : "border-slate-300 hover:border-slate-400 bg-white"
@@ -637,12 +640,22 @@ export default function WeeklyPlannerPage() {
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <p className={cn(
-                              "text-[11px] font-medium text-[#0F172A] leading-snug line-clamp-2",
-                              isCompleted ? "line-through text-[#64748B]" : ""
-                            )}>
-                              {task.title}
-                            </p>
+                            <div className="flex items-center gap-1">
+                              <p className={cn(
+                                "text-[11px] font-medium text-[#0F172A] leading-snug line-clamp-2",
+                                isCompleted ? "line-through text-[#64748B]" : ""
+                              )}>
+                                {task.title}
+                              </p>
+                              {task.isRecurring && (
+                                <span
+                                  title="Repeats Daily"
+                                  className="inline-flex items-center gap-0.5 text-[8px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1 py-0.2 rounded shrink-0"
+                                >
+                                  <Repeat className="w-2 h-2" /> Daily
+                                </span>
+                              )}
+                            </div>
                             <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                               {project && (
                                 <p className="text-[9px] truncate font-semibold" style={{ color: project.color }}>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabase"
+import { parseTaskNotes } from "@/lib/task-meta"
 import webpush from "web-push"
 
 const PRIO_WEIGHT: Record<string, number> = {
@@ -101,15 +102,29 @@ export async function GET(request: Request) {
         .from("tasks")
         .select("*")
         .eq("user_id", u.id)
-        .eq("scheduled_date", localDateStr)
 
-      const tasksList = dbTasks || []
+      const allUserTasks = (dbTasks || []).map((t) => {
+        const { cleanNotes, meta } = parseTaskNotes(t.notes)
+        return {
+          ...t,
+          notes: cleanNotes,
+          isRecurring: t.is_recurring ?? meta.isRecurring ?? false,
+          recurringHistory: t.recurring_history ?? meta.recurringHistory ?? {},
+        }
+      })
+
+      const tasksList = allUserTasks.filter(
+        (t) => t.scheduled_date === localDateStr || t.isRecurring
+      )
+      const isTaskDone = (t: any) =>
+        t.isRecurring ? Boolean(t.recurringHistory?.[localDateStr]) : t.status === "completed"
+
       let title = ""
       let body = ""
       const url = "/daily"
 
       if (isMorning) {
-        const activeTasks = tasksList.filter(t => t.status !== "completed")
+        const activeTasks = tasksList.filter((t) => !isTaskDone(t))
         const topTask = [...activeTasks].sort((a, b) => {
           const wB = PRIO_WEIGHT[b.priority] || 0
           const wA = PRIO_WEIGHT[a.priority] || 0
@@ -121,8 +136,8 @@ export async function GET(request: Request) {
           ? `Get started on your day! Top priority: "${topTask.title}". let's crush it!`
           : "No tasks scheduled for today. Take some time to plan your day!"
       } else if (isEvening) {
-        const completed = tasksList.filter(t => t.status === "completed")
-        const remaining = tasksList.filter(t => t.status !== "completed")
+        const completed = tasksList.filter(isTaskDone)
+        const remaining = tasksList.filter((t) => !isTaskDone(t))
 
         title = `🌌 Evening Progress: ${completed.length}/${tasksList.length} Completed`
         body = tasksList.length > 0

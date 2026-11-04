@@ -33,6 +33,7 @@ interface AIPlanRequest {
   projects: ProjectInput[]
   weekDates: string[]                         // ISO date strings Mon-Sun
   dailyCapacities: Record<string, number>     // { "Mon": 5, ... }
+  todayDateKey?: string
 }
 
 interface AIPlanAssignment {

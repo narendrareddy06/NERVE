@@ -17,6 +17,7 @@ import {
   Target,
   Sparkles,
   CheckCircle2,
+  Repeat,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProgressBar, PriorityBadge, StatusBadge } from "@/components/nerve/ui"
@@ -73,8 +74,11 @@ export default function DashboardPage() {
   }, [])
 
   const todayTasksList = useMemo(() => {
-    return tasks.filter((t) => t.scheduledDate === todayStr)
+    return tasks.filter((t) => t.scheduledDate === todayStr || t.isRecurring)
   }, [tasks, todayStr])
+
+  const isTaskDoneToday = (t: Task) =>
+    t.isRecurring ? Boolean(t.recurringHistory?.[todayStr]) : t.status === "completed"
 
   const todayTasksByBlock = useMemo(() => {
     const map: Record<string, Task[]> = { morning: [], afternoon: [], evening: [], flexible: [] }
@@ -89,7 +93,7 @@ export default function DashboardPage() {
   }, [todayTasksList])
 
   const totalTodayTasks = todayTasksList.length
-  const completedToday = todayTasksList.filter((t) => t.status === "completed").length
+  const completedToday = todayTasksList.filter(isTaskDoneToday).length
   const todayProgressPct = totalTodayTasks > 0 ? Math.round((completedToday / totalTodayTasks) * 100) : 0
 
   // 2. Weekly Goals Completion stats
@@ -196,7 +200,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="space-y-2">
                         {blockTasks.map((task) => {
-                          const isCompleted = task.status === "completed"
+                          const isCompleted = isTaskDoneToday(task)
                           return (
                             <div
                               key={task.id}
@@ -210,7 +214,7 @@ export default function DashboardPage() {
                               <button
                                 onClick={() => toggleTaskComplete(task.id)}
                                 className={cn(
-                                  "w-5 h-5 rounded-md border shrink-0 flex items-center justify-center transition-all",
+                                  "w-5 h-5 rounded-md border shrink-0 flex items-center justify-center transition-all cursor-pointer",
                                   isCompleted
                                     ? "border-[#10B981] bg-[#10B981]/10"
                                     : "border-slate-300 hover:border-[#2563EB]/50"
@@ -219,9 +223,19 @@ export default function DashboardPage() {
                                 {isCompleted && <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981]" />}
                               </button>
                               <div className="min-w-0 flex-1">
-                                <p className={cn("text-xs font-semibold truncate", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
-                                  {task.title}
-                                </p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className={cn("text-xs font-semibold truncate", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
+                                    {task.title}
+                                  </p>
+                                  {task.isRecurring && (
+                                    <span
+                                      title="Repeats Daily"
+                                      className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1 py-0.2 rounded shrink-0"
+                                    >
+                                      <Repeat className="w-2.5 h-2.5" /> Daily
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-[#64748B]">
                                   <span style={{ color: block.color }}>{task.project}</span>
                                   {task.goal && (
@@ -252,7 +266,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="space-y-2">
                       {todayTasksByBlock.flexible.map((task) => {
-                        const isCompleted = task.status === "completed"
+                        const isCompleted = isTaskDoneToday(task)
                         return (
                           <div
                             key={task.id}
@@ -266,7 +280,7 @@ export default function DashboardPage() {
                             <button
                               onClick={() => toggleTaskComplete(task.id)}
                               className={cn(
-                                "w-5 h-5 rounded-md border shrink-0 flex items-center justify-center transition-all",
+                                "w-5 h-5 rounded-md border shrink-0 flex items-center justify-center transition-all cursor-pointer",
                                 isCompleted
                                   ? "border-[#10B981] bg-[#10B981]/10"
                                   : "border-slate-300 hover:border-[#2563EB]/50"
@@ -275,9 +289,19 @@ export default function DashboardPage() {
                               {isCompleted && <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981]" />}
                             </button>
                             <div className="min-w-0 flex-1">
-                              <p className={cn("text-xs font-semibold truncate", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
-                                {task.title}
-                              </p>
+                              <div className="flex items-center gap-1.5">
+                                <p className={cn("text-xs font-semibold truncate", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
+                                  {task.title}
+                                </p>
+                                {task.isRecurring && (
+                                  <span
+                                    title="Repeats Daily"
+                                    className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1 py-0.2 rounded shrink-0"
+                                  >
+                                    <Repeat className="w-2.5 h-2.5" /> Daily
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-[#64748B]">
                                 <span className="text-blue-500 font-semibold">{task.project}</span>
                                 {task.goal && (
@@ -416,7 +440,7 @@ export default function DashboardPage() {
                                       </div>
                                     ) : (
                                       goalTasks.map((task) => {
-                                        const isCompleted = task.status === "completed"
+                                        const isCompleted = isTaskDoneToday(task)
                                         return (
                                           <div
                                             key={task.id}
@@ -425,7 +449,7 @@ export default function DashboardPage() {
                                             <button
                                               onClick={() => toggleTaskComplete(task.id)}
                                               className={cn(
-                                                "w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-all",
+                                                "w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-all cursor-pointer",
                                                 isCompleted
                                                   ? "border-[#10B981] bg-[#10B981]/10"
                                                   : "border-slate-300 hover:border-[#2563EB]/50"
@@ -440,6 +464,14 @@ export default function DashboardPage() {
                                             <span className={cn("text-xs flex-1 truncate", isCompleted ? "text-[#94A3B8] line-through" : "text-[#334155]")}>
                                               {task.title}
                                             </span>
+                                            {task.isRecurring && (
+                                              <span
+                                                title="Repeats Daily"
+                                                className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1 py-0.2 rounded shrink-0"
+                                              >
+                                                <Repeat className="w-2 h-2" /> Daily
+                                              </span>
+                                            )}
                                             <PriorityBadge priority={task.priority} />
                                           </div>
                                         )

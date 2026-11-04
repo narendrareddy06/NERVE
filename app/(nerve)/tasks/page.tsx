@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, MoreHorizontal, Pencil, Trash2, Clock, Zap, PlayCircle, CheckCircle2, GripVertical } from "lucide-react"
+import { useState, useMemo } from "react"
+import { Plus, MoreHorizontal, Pencil, Trash2, Clock, Zap, PlayCircle, CheckCircle2, GripVertical, Repeat } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PriorityBadge, StatusBadge, SectionHeader } from "@/components/nerve/ui"
 import { useNerveStore } from "@/lib/nerve-store"
@@ -75,6 +75,7 @@ function TaskModal({
   const [goalId, setGoalId] = useState(task?.goalId ?? "")
   const [notes, setNotes] = useState(task?.notes ?? "")
   const [dependsOnTaskId, setDependsOnTaskId] = useState(task?.dependsOnTaskId ?? "")
+  const [isRecurring, setIsRecurring] = useState(task?.isRecurring ?? false)
 
   const selectedProject = projects.find((p) => p.id === projectId)
   const projectGoals = goals.filter((g) => g.projectId === projectId)
@@ -209,6 +210,22 @@ function TaskModal({
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] placeholder:text-[#64748B] outline-none focus:border-[#2563EB]/50 resize-none"
             />
           </div>
+          <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+            <div>
+              <label className="text-xs font-semibold text-[#0F172A] flex items-center gap-1.5 cursor-pointer">
+                <Repeat className="w-3.5 h-3.5 text-[#2563EB]" /> Repeat Daily
+              </label>
+              <p className="text-[11px] text-[#64748B] mt-0.5">
+                Automatically appears in Daily Planner every day with fresh completion status
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={isRecurring}
+              onChange={(e) => setIsRecurring(e.target.checked)}
+              className="w-4 h-4 text-[#2563EB] rounded border-slate-300 focus:ring-[#2563EB] cursor-pointer"
+            />
+          </div>
         </div>
         <div className="flex gap-3 mt-6">
           <Button variant="outline" onClick={onClose} className="flex-1 border-slate-200 text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50 rounded-xl">
@@ -230,6 +247,10 @@ function TaskModal({
                 notes: notes || undefined,
                 dependsOnTaskId: dependsOnTaskId || undefined,
                 actualTime: task?.actualTime ?? 0,
+                isRecurring,
+                recurringHistory: task?.recurringHistory ?? {},
+                scheduledDate: isRecurring ? undefined : task?.scheduledDate,
+                scheduledBlock: task?.scheduledBlock,
               })
             }
             className="flex-1 nerve-gradient-blue text-white border-0 rounded-xl font-semibold hover:opacity-90"
@@ -249,7 +270,21 @@ export default function TasksPage() {
   const [editingTask, setEditingTask] = useState<Task | undefined>()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
-  const filtered = tasks.filter((t) => statusFilter === "all" || t.status === statusFilter)
+  const todayStr = useMemo(() => {
+    const d = new Date()
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, "0")
+    const dd = String(d.getDate()).padStart(2, "0")
+    return `${yyyy}-${mm}-${dd}`
+  }, [])
+
+  const filtered = tasks.filter((t) => {
+    if (statusFilter === "all") return true
+    const effectiveStatus = t.isRecurring
+      ? (t.recurringHistory?.[todayStr] ? "completed" : t.status === "in-progress" ? "in-progress" : "todo")
+      : t.status
+    return effectiveStatus === statusFilter
+  })
 
   const handleSave = (t: Task) => {
     updateTask(t)
@@ -312,7 +347,9 @@ export default function TasksPage() {
       <div className="space-y-2">
         {filtered.map((task) => {
           const project = projects.find((p) => p.id === task.projectId)
-          const isCompleted = task.status === "completed"
+          const isCompleted = task.isRecurring
+            ? Boolean(task.recurringHistory?.[todayStr])
+            : task.status === "completed"
 
           return (
             <div
@@ -345,9 +382,19 @@ export default function TasksPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className={cn("text-sm font-semibold", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
-                        {task.title}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className={cn("text-sm font-semibold", isCompleted ? "text-[#64748B] line-through" : "text-[#0F172A]")}>
+                          {task.title}
+                        </p>
+                        {task.isRecurring && (
+                          <span
+                            title="Repeats Daily"
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 bg-blue-50 border border-blue-200/60 px-1.5 py-0.5 rounded-md shrink-0"
+                          >
+                            <Repeat className="w-2.5 h-2.5" /> Daily
+                          </span>
+                        )}
+                      </div>
                       {task.notes && (
                         <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">{task.notes}</p>
                       )}

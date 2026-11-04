@@ -55,8 +55,18 @@ export default function StatisticsPage() {
 
   const WEEK_XP = useMemo(() => {
     return dateKeys.map((key) => {
-      const dayTasks = tasks.filter((t) => t.scheduledDate === key && t.status === "completed")
-      return dayTasks.reduce((sum, t) => sum + t.xp, 0)
+      const dayTasks = tasks.filter((t) => {
+        if (t.isRecurring) {
+          return Boolean(t.recurringHistory?.[key])
+        }
+        return t.scheduledDate === key && t.status === "completed"
+      })
+      return dayTasks.reduce((sum, t) => {
+        if (t.isRecurring) {
+          return sum + (t.recurringHistory?.[key]?.xpAwarded ?? t.xp)
+        }
+        return sum + t.xp
+      }, 0)
     })
   }, [tasks, dateKeys])
 
@@ -71,7 +81,19 @@ export default function StatisticsPage() {
   }, [WEEK_XP])
 
   // 2. Metrics for cards
-  const completedTasks = useMemo(() => tasks.filter((t) => t.status === "completed").length, [tasks])
+  const completedTasks = useMemo(() => {
+    const todayD = new Date()
+    const yyyy = todayD.getFullYear()
+    const mm = String(todayD.getMonth() + 1).padStart(2, "0")
+    const dd = String(todayD.getDate()).padStart(2, "0")
+    const todayKey = `${yyyy}-${mm}-${dd}`
+    return tasks.filter((t) => {
+      if (t.isRecurring) {
+        return Boolean(t.recurringHistory?.[todayKey])
+      }
+      return t.status === "completed"
+    }).length
+  }, [tasks])
   const totalTasks = tasks.length
 
   const totalFocusSeconds = useMemo(() => tasks.reduce((sum, t) => sum + (t.actualTime ?? 0), 0), [tasks])

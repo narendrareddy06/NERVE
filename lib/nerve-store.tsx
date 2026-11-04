@@ -32,7 +32,7 @@ interface NerveStoreContextType {
     timezone: string
   }
   clearPendingMilestone: () => void
-  toggleTaskComplete: (taskId: string) => void
+  toggleTaskComplete: (taskId: string, targetDate?: string) => void
   updateTask: (task: Task) => void
   updateTasks: (newTasks: Task[]) => void
   deleteTask: (taskId: string) => void
@@ -100,6 +100,8 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   const [focusSecondsLeft, setFocusSecondsLeft] = useState(25 * 60)
   const [focusTotalSeconds, setFocusTotalSeconds] = useState(25 * 60)
   const [isFocusRunning, setIsFocusRunning] = useState(false)
+  const [focusEndTime, setFocusEndTime] = useState<number | null>(null)
+  const [focusRunStartTime, setFocusRunStartTime] = useState<number | null>(null)
   const [focusSecondsWorked, setFocusSecondsWorked] = useState(0)
 
   const [notificationSettings, setNotificationSettings] = useState({
@@ -168,6 +170,13 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
 
           let hasRollover = false
           const rolledTasks = fetchedTasks.map((task) => {
+            if (task.isRecurring) {
+              const isCompletedToday = Boolean(task.recurringHistory?.[localTodayStr])
+              return {
+                ...task,
+                status: isCompletedToday ? ("completed" as const) : ("todo" as const),
+              }
+            }
             if (task.scheduledDate && task.scheduledDate < localTodayStr && task.status !== "completed") {
               hasRollover = true
               return {
@@ -232,7 +241,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   }, [tasks]) // Recalculate if tasks change to keep UI fresh
 
   const dailyPlan = useMemo(() => {
-    const todayTasks = tasks.filter((t) => t.scheduledDate === todayStr)
+    const todayTasks = tasks.filter((t) => t.scheduledDate === todayStr || t.isRecurring)
     return {
       morning: todayTasks.filter((t) => t.scheduledBlock === "morning").map((t) => t.id),
       afternoon: todayTasks.filter((t) => t.scheduledBlock === "afternoon").map((t) => t.id),
@@ -280,31 +289,58 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     const storedSecondsLeft = localStorage.getItem("nerve_focus_seconds_left")
     const storedTotalSeconds = localStorage.getItem("nerve_focus_total_seconds")
     const storedIsRunning = localStorage.getItem("nerve_focus_is_running")
+    const storedEndTime = localStorage.getItem("nerve_focus_end_time")
+    const storedRunStartTime = localStorage.getItem("nerve_focus_run_start_time")
     const storedSecondsWorked = localStorage.getItem("nerve_focus_seconds_worked")
-    const storedLastTimestamp = localStorage.getItem("nerve_focus_last_timestamp")
 
     if (storedActiveTaskId) {
       setActiveFocusTaskId(storedActiveTaskId)
-      const secsLeft = Number(storedSecondsLeft || 25 * 60)
       const totalSecs = Number(storedTotalSeconds || 25 * 60)
+      const secsLeft = Number(storedSecondsLeft || totalSecs)
       const secsWorked = Number(storedSecondsWorked || 0)
       const isRunning = storedIsRunning === "true"
 
-      if (isRunning && storedLastTimestamp) {
-        const elapsedMs = Date.now() - Number(storedLastTimestamp)
-        const elapsedSecs = Math.floor(elapsedMs / 1000)
-        const newSecondsLeft = Math.max(0, secsLeft - elapsedSecs)
-        const newSecondsWorked = secsWorked + Math.min(secsLeft, elapsedSecs)
+      setFocusTotalSeconds(totalSecs)
 
-        setFocusSecondsLeft(newSecondsLeft)
-        setFocusSecondsWorked(newSecondsWorked)
-        setIsFocusRunning(newSecondsLeft > 0)
+      if (isRunning && storedEndTime) {
+        const endTime = Number(storedEndTime)
+        const now = Date.now()
+        const remainingMs = endTime - now
+
+        if (remainingMs > 0) {
+          const remainingSecs = Math.ceil(remainingMs / 1000)
+          setFocusSecondsLeft(remainingSecs)
+          setFocusEndTime(endTime)
+          setFocusRunStartTime(storedRunStartTime ? Number(storedRunStartTime) : now)
+          setFocusSecondsWorked(secsWorked)
+          setIsFocusRunning(true)
+        } else {
+          // Timer finished while tab was closed/inactive
+          setFocusSecondsLeft(0)
+          setIsFocusRunning(false)
+          setFocusEndTime(null)
+          setFocusRunStartTime(null)
+
+          const runStartTime = storedRunStartTime ? Number(storedRunStartTime) : now
+          const elapsed = Math.max(0, Math.floor((endTime - runStartTime) / 1000))
+          const totalWorked = secsWorked + elapsed
+
+          setFocusSecondsWorked(0)
+          saveFocusTime(storedActiveTaskId, totalWorked)
+
+          localStorage.setItem("nerve_focus_is_running", "false")
+          localStorage.setItem("nerve_focus_seconds_left", "0")
+          localStorage.removeItem("nerve_focus_end_time")
+          localStorage.removeItem("nerve_focus_run_start_time")
+          localStorage.setItem("nerve_focus_seconds_worked", "0")
+        }
       } else {
         setFocusSecondsLeft(secsLeft)
         setFocusSecondsWorked(secsWorked)
         setIsFocusRunning(false)
+        setFocusEndTime(null)
+        setFocusRunStartTime(null)
       }
-      setFocusTotalSeconds(totalSecs)
     }
   }, [])
 
@@ -312,53 +348,33 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     if (activeFocusTaskId) {
       localStorage.setItem("nerve_focus_task_id", activeFocusTaskId)
-      localStorage.setItem("nerve_focus_seconds_left", String(focusSecondsLeft))
       localStorage.setItem("nerve_focus_total_seconds", String(focusTotalSeconds))
+      localStorage.setItem("nerve_focus_seconds_left", String(focusSecondsLeft))
       localStorage.setItem("nerve_focus_is_running", String(isFocusRunning))
       localStorage.setItem("nerve_focus_seconds_worked", String(focusSecondsWorked))
-      localStorage.setItem("nerve_focus_last_timestamp", String(Date.now()))
+      if (focusEndTime) {
+        localStorage.setItem("nerve_focus_end_time", String(focusEndTime))
+      } else {
+        localStorage.removeItem("nerve_focus_end_time")
+      }
+      if (focusRunStartTime) {
+        localStorage.setItem("nerve_focus_run_start_time", String(focusRunStartTime))
+      } else {
+        localStorage.removeItem("nerve_focus_run_start_time")
+      }
     } else {
       localStorage.removeItem("nerve_focus_task_id")
       localStorage.removeItem("nerve_focus_seconds_left")
       localStorage.removeItem("nerve_focus_total_seconds")
       localStorage.removeItem("nerve_focus_is_running")
+      localStorage.removeItem("nerve_focus_end_time")
+      localStorage.removeItem("nerve_focus_run_start_time")
       localStorage.removeItem("nerve_focus_seconds_worked")
-      localStorage.removeItem("nerve_focus_last_timestamp")
     }
-  }, [activeFocusTaskId, focusSecondsLeft, focusTotalSeconds, isFocusRunning, focusSecondsWorked])
-
-  // Focus Timer Interval Ticking
-  useEffect(() => {
-    let timerInterval: ReturnType<typeof setInterval> | null = null
-
-    if (isFocusRunning && activeFocusTaskId) {
-      timerInterval = setInterval(() => {
-        setFocusSecondsLeft((s) => {
-          if (s <= 1) {
-            setIsFocusRunning(false)
-            setFocusSecondsWorked((w) => w + 1)
-            return 0
-          }
-          setFocusSecondsWorked((w) => w + 1)
-          return s - 1
-        })
-      }, 1000)
-    }
-
-    return () => {
-      if (timerInterval) clearInterval(timerInterval)
-    }
-  }, [isFocusRunning, activeFocusTaskId])
-
-  // Save progress when paused or inactive
-  useEffect(() => {
-    if (!isFocusRunning && focusSecondsWorked > 0 && activeFocusTaskId) {
-      saveFocusTime(activeFocusTaskId, focusSecondsWorked)
-      setFocusSecondsWorked(0)
-    }
-  }, [isFocusRunning, focusSecondsWorked, activeFocusTaskId])
+  }, [activeFocusTaskId, focusSecondsLeft, focusTotalSeconds, isFocusRunning, focusEndTime, focusRunStartTime, focusSecondsWorked])
 
   const saveFocusTime = (taskId: string, seconds: number) => {
+    if (seconds <= 0) return
     const task = tasks.find((t) => t.id === taskId)
     if (task) {
       updateTask({
@@ -368,11 +384,76 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     }
   }
 
+  // Recalculate remaining time and handle completion from absolute end timestamp
+  const recalculateFromEndTime = () => {
+    if (!isFocusRunning || !focusEndTime || !activeFocusTaskId) return
+
+    const now = Date.now()
+    const diffMs = focusEndTime - now
+
+    if (diffMs <= 0) {
+      setFocusSecondsLeft(0)
+      setIsFocusRunning(false)
+      setFocusEndTime(null)
+
+      const elapsed = focusRunStartTime ? Math.max(0, Math.floor((now - focusRunStartTime) / 1000)) : 0
+      const totalWorked = focusSecondsWorked + elapsed
+
+      setFocusRunStartTime(null)
+      setFocusSecondsWorked(0)
+      saveFocusTime(activeFocusTaskId, totalWorked)
+
+      localStorage.setItem("nerve_focus_is_running", "false")
+      localStorage.setItem("nerve_focus_seconds_left", "0")
+      localStorage.removeItem("nerve_focus_end_time")
+      localStorage.removeItem("nerve_focus_run_start_time")
+      localStorage.setItem("nerve_focus_seconds_worked", "0")
+    } else {
+      const remainingSecs = Math.ceil(diffMs / 1000)
+      setFocusSecondsLeft(remainingSecs)
+    }
+  }
+
+  // Timer interval ticking while running
+  useEffect(() => {
+    if (!isFocusRunning || !focusEndTime || !activeFocusTaskId) return
+
+    recalculateFromEndTime()
+
+    const interval = setInterval(() => {
+      recalculateFromEndTime()
+    }, 500)
+
+    return () => clearInterval(interval)
+  }, [isFocusRunning, focusEndTime, activeFocusTaskId, focusRunStartTime, focusSecondsWorked])
+
+  // Recalculate immediately when tab becomes visible again or window gains focus
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        recalculateFromEndTime()
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus)
+    window.addEventListener("focus", handleVisibilityOrFocus)
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus)
+      window.removeEventListener("focus", handleVisibilityOrFocus)
+    }
+  }, [isFocusRunning, focusEndTime, activeFocusTaskId, focusRunStartTime, focusSecondsWorked])
+
   const startFocus = (taskId: string, durationSeconds: number) => {
+    const now = Date.now()
+    const endTime = now + durationSeconds * 1000
+
     setActiveFocusTaskId(taskId)
     setFocusSecondsLeft(durationSeconds)
     setFocusTotalSeconds(durationSeconds)
     setIsFocusRunning(true)
+    setFocusEndTime(endTime)
+    setFocusRunStartTime(now)
     setFocusSecondsWorked(0)
 
     const targetTask = tasks.find((t) => t.id === taskId)
@@ -382,23 +463,83 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   }
 
   const pauseFocus = () => {
+    if (!isFocusRunning) return
+    const now = Date.now()
+    let remaining = focusSecondsLeft
+    if (focusEndTime) {
+      remaining = Math.max(0, Math.ceil((focusEndTime - now) / 1000))
+    }
+    const elapsed = focusRunStartTime ? Math.max(0, Math.floor((now - focusRunStartTime) / 1000)) : 0
+    const totalWorked = focusSecondsWorked + elapsed
+
     setIsFocusRunning(false)
+    setFocusSecondsLeft(remaining)
+    setFocusEndTime(null)
+    setFocusRunStartTime(null)
+    setFocusSecondsWorked(0)
+
+    if (activeFocusTaskId && totalWorked > 0) {
+      saveFocusTime(activeFocusTaskId, totalWorked)
+    }
+
+    localStorage.setItem("nerve_focus_is_running", "false")
+    localStorage.setItem("nerve_focus_seconds_left", String(remaining))
+    localStorage.removeItem("nerve_focus_end_time")
+    localStorage.removeItem("nerve_focus_run_start_time")
+    localStorage.setItem("nerve_focus_seconds_worked", "0")
   }
 
   const resumeFocus = () => {
+    if (isFocusRunning || focusSecondsLeft <= 0) return
+    const now = Date.now()
+    const endTime = now + focusSecondsLeft * 1000
+
     setIsFocusRunning(true)
+    setFocusEndTime(endTime)
+    setFocusRunStartTime(now)
+
+    localStorage.setItem("nerve_focus_is_running", "true")
+    localStorage.setItem("nerve_focus_end_time", String(endTime))
+    localStorage.setItem("nerve_focus_run_start_time", String(now))
+    localStorage.setItem("nerve_focus_seconds_left", String(focusSecondsLeft))
   }
 
   const resetFocus = () => {
+    const now = Date.now()
+    if (isFocusRunning && activeFocusTaskId) {
+      const elapsed = focusRunStartTime ? Math.max(0, Math.floor((now - focusRunStartTime) / 1000)) : 0
+      const totalWorked = focusSecondsWorked + elapsed
+      if (totalWorked > 0) {
+        saveFocusTime(activeFocusTaskId, totalWorked)
+      }
+    }
+
     setIsFocusRunning(false)
+    setFocusEndTime(null)
+    setFocusRunStartTime(null)
     setFocusSecondsLeft(focusTotalSeconds)
     setFocusSecondsWorked(0)
+
+    localStorage.setItem("nerve_focus_is_running", "false")
+    localStorage.removeItem("nerve_focus_end_time")
+    localStorage.removeItem("nerve_focus_run_start_time")
+    localStorage.setItem("nerve_focus_seconds_left", String(focusTotalSeconds))
+    localStorage.setItem("nerve_focus_seconds_worked", "0")
   }
 
   const completeFocus = () => {
+    const now = Date.now()
+    let secondsToSave = focusSecondsWorked
+    if (isFocusRunning && focusRunStartTime) {
+      secondsToSave += Math.max(0, Math.floor((now - focusRunStartTime) / 1000))
+    }
+
     setIsFocusRunning(false)
+    setFocusEndTime(null)
+    setFocusRunStartTime(null)
+    setFocusSecondsWorked(0)
+
     if (activeFocusTaskId) {
-      const secondsToSave = focusSecondsWorked
       const task = tasks.find((t) => t.id === activeFocusTaskId)
       if (task) {
         const nextActual = (task.actualTime ?? 0) + secondsToSave
@@ -408,24 +549,48 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           toggleTaskComplete(activeFocusTaskId)
         }
       }
-      setFocusSecondsWorked(0)
       setActiveFocusTaskId(null)
     }
+
+    localStorage.removeItem("nerve_focus_task_id")
+    localStorage.removeItem("nerve_focus_seconds_left")
+    localStorage.removeItem("nerve_focus_total_seconds")
+    localStorage.removeItem("nerve_focus_is_running")
+    localStorage.removeItem("nerve_focus_end_time")
+    localStorage.removeItem("nerve_focus_run_start_time")
+    localStorage.removeItem("nerve_focus_seconds_worked")
   }
 
   const switchFocusTask = () => {
+    const now = Date.now()
+    let secondsToSave = focusSecondsWorked
+    if (isFocusRunning && focusRunStartTime) {
+      secondsToSave += Math.max(0, Math.floor((now - focusRunStartTime) / 1000))
+    }
+
     setIsFocusRunning(false)
+    setFocusEndTime(null)
+    setFocusRunStartTime(null)
+    setFocusSecondsWorked(0)
+
     if (activeFocusTaskId) {
-      if (focusSecondsWorked > 0) {
-        saveFocusTime(activeFocusTaskId, focusSecondsWorked)
+      if (secondsToSave > 0) {
+        saveFocusTime(activeFocusTaskId, secondsToSave)
       }
       const task = tasks.find((t) => t.id === activeFocusTaskId)
       if (task) {
         updateTask({ ...task, status: "todo" })
       }
       setActiveFocusTaskId(null)
-      setFocusSecondsWorked(0)
     }
+
+    localStorage.removeItem("nerve_focus_task_id")
+    localStorage.removeItem("nerve_focus_seconds_left")
+    localStorage.removeItem("nerve_focus_total_seconds")
+    localStorage.removeItem("nerve_focus_is_running")
+    localStorage.removeItem("nerve_focus_end_time")
+    localStorage.removeItem("nerve_focus_run_start_time")
+    localStorage.removeItem("nerve_focus_seconds_worked")
   }
 
   // Helper to persist everything to the backend API
@@ -477,7 +642,12 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           progress: 0,
         }
       }
-      const completedCount = tasksInGoal.filter((t) => t.status === "completed").length
+      const completedCount = tasksInGoal.filter((t) => {
+        if (t.isRecurring) {
+          return Boolean(t.recurringHistory?.[todayStr])
+        }
+        return t.status === "completed"
+      }).length
       const pct = Math.round((completedCount / tasksInGoal.length) * 100)
       return {
         ...g,
@@ -578,23 +748,75 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
   }
 
   // Operations
-  const toggleTaskComplete = (taskId: string) => {
+  const toggleTaskComplete = (taskId: string, targetDate?: string) => {
     const targetTask = tasks.find((t) => t.id === taskId)
     if (!targetTask) return
 
-    const newStatus = targetTask.status === "completed" ? "todo" : "completed"
-    const xpChange = targetTask.xp
+    const effectiveDate = targetDate || todayStr
 
-    const nextTasks = tasks.map((t) =>
-      t.id === taskId ? { ...t, status: newStatus as typeof t.status } : t
-    )
+    let newStatus: typeof targetTask.status
+    let xpChange = targetTask.xp
+    let isCompleting = false
+    let nextTasks: Task[]
 
-    let nextXp = newStatus === "completed" ? userXp + xpChange : Math.max(0, userXp - xpChange)
+    if (targetTask.isRecurring) {
+      const history = { ...(targetTask.recurringHistory || {}) }
+      const alreadyCompletedOnDate = Boolean(history[effectiveDate])
+
+      if (alreadyCompletedOnDate) {
+        // Uncompleting for this date
+        const awarded = history[effectiveDate]?.xpAwarded ?? targetTask.xp
+        delete history[effectiveDate]
+        xpChange = -awarded
+        isCompleting = false
+        const isToday = effectiveDate === todayStr
+        newStatus = isToday ? "todo" : targetTask.status
+      } else {
+        // Completing for this date
+        history[effectiveDate] = {
+          completedAt: new Date().toISOString(),
+          xpAwarded: targetTask.xp,
+        }
+        xpChange = targetTask.xp
+        isCompleting = true
+        const isToday = effectiveDate === todayStr
+        newStatus = isToday ? "completed" : targetTask.status
+      }
+
+      nextTasks = tasks.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              status: newStatus,
+              recurringHistory: history,
+            }
+          : t
+      )
+    } else {
+      newStatus = targetTask.status === "completed" ? "todo" : "completed"
+      isCompleting = newStatus === "completed"
+      xpChange = isCompleting ? targetTask.xp : -targetTask.xp
+
+      nextTasks = tasks.map((t) =>
+        t.id === taskId ? { ...t, status: newStatus as typeof t.status } : t
+      )
+    }
+
+    let nextXp = isCompleting ? userXp + Math.abs(xpChange) : Math.max(0, userXp - Math.abs(xpChange))
     let nextMilestones = milestones
 
     // --- Milestone completion detection ---
-    if (newStatus === "completed") {
-      const completedIds = new Set(nextTasks.filter(t => t.status === "completed").map(t => t.id))
+    if (isCompleting) {
+      const completedIds = new Set(
+        nextTasks
+          .filter((t) => {
+            if (t.isRecurring) {
+              return Boolean(t.recurringHistory?.[todayStr])
+            }
+            return t.status === "completed"
+          })
+          .map((t) => t.id)
+      )
       let milestoneBonusXp = 0
       let justCompletedMilestone: Milestone | null = null
 

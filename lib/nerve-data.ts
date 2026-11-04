@@ -60,6 +60,8 @@ export interface Task {
   scheduledBlock?: 'morning' | 'afternoon' | 'evening'
   actualTime?: number
   dependsOnTaskId?: string
+  isRecurring?: boolean
+  recurringHistory?: Record<string, { completedAt: string; xpAwarded: number }>
 }
 
 export interface Reward {
