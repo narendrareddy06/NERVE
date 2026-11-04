@@ -95,11 +95,11 @@ function TaskModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="relative w-full max-w-md bg-[#FFFFFF] border border-slate-200 rounded-2xl p-6 shadow-2xl"
+        className="relative w-full max-w-md bg-[#FFFFFF] border border-slate-200 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-lg font-bold text-[#0F172A] mb-5">{task?.id ? "Edit Task" : "New Task"}</h2>
-        <div className="space-y-4">
+        <h2 className="text-lg font-bold text-[#0F172A] px-6 pt-6 pb-5 shrink-0">{task?.id ? "Edit Task" : "New Task"}</h2>
+        <div className="space-y-4 overflow-y-auto flex-1 px-6 pb-2">
           <div>
             <label className="text-xs font-medium text-[#64748B] uppercase tracking-wider mb-2 block">Task Title</label>
             <input
@@ -227,7 +227,7 @@ function TaskModal({
             />
           </div>
         </div>
-        <div className="flex gap-3 mt-6">
+        <div className="flex gap-3 px-6 py-4 border-t border-slate-100 shrink-0">
           <Button variant="outline" onClick={onClose} className="flex-1 border-slate-200 text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50 rounded-xl">
             Cancel
           </Button>
