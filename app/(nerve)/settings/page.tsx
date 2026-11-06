@@ -51,11 +51,13 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export default function SettingsPage() {
-  const { userId, notificationSettings, updateNotificationSettings } = useNerveStore()
+  const { userId, username, displayName, updateProfile, notificationSettings, updateNotificationSettings } = useNerveStore()
   
   const [activeSection, setActiveSection] = useState("profile")
   const [permission, setPermission] = useState<string>("default")
   const [subscribing, setSubscribing] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [profileSaved, setProfileSaved] = useState(false)
 
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -126,8 +128,43 @@ export default function SettingsPage() {
 
   const [selectedTheme, setSelectedTheme] = useState("dark")
   const [selectedAccent, setSelectedAccent] = useState("blue")
-  const [name, setName] = useState("Alex")
-  const [email, setEmail] = useState("alex@nerve.app")
+  const [name, setName] = useState(displayName || username || "")
+  const [email, setEmail] = useState("")
+
+  useEffect(() => {
+    if (displayName) {
+      setName(displayName)
+    } else if (username) {
+      setName(username)
+    }
+  }, [displayName, username])
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const storedEmail = localStorage.getItem("nerve_email")
+      if (storedEmail) {
+        setEmail(storedEmail)
+      } else if (username) {
+        setEmail(`${username}@nerve.app`)
+      }
+    }
+  }, [username])
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true)
+    try {
+      await updateProfile(name)
+      if (typeof window !== "undefined") {
+        localStorage.setItem("nerve_email", email)
+      }
+      setProfileSaved(true)
+      setTimeout(() => setProfileSaved(false), 2500)
+    } catch (err) {
+      console.error("Save profile error:", err)
+    } finally {
+      setSavingProfile(false)
+    }
+  }
   const [notifications, setNotifications] = useState({
     focusReminders: true,
     dailySummary: true,
@@ -168,13 +205,13 @@ export default function SettingsPage() {
         return (
           <div className="space-y-5">
             <div className="flex items-center gap-5 mb-6">
-              <div className="w-16 h-16 rounded-2xl nerve-gradient-blue flex items-center justify-center text-2xl font-bold text-[#0F172A] shrink-0">
-                {name[0] ?? "A"}
+              <div className="w-16 h-16 rounded-2xl nerve-gradient-blue flex items-center justify-center text-2xl font-bold text-white shrink-0">
+                {(name || username || "U")[0]?.toUpperCase() ?? "U"}
               </div>
               <div>
-                <p className="text-base font-bold text-[#0F172A]">{name}</p>
-                <p className="text-sm text-[#64748B]">{email}</p>
-                <button className="text-xs text-[#2563EB] mt-1 hover:underline">Change avatar</button>
+                <p className="text-base font-bold text-[#0F172A]">{name || username || "User"}</p>
+                <p className="text-sm text-[#64748B]">{email || (username ? `@${username}` : "")}</p>
+                <p className="text-xs text-[#2563EB] mt-0.5">@{username || "user"}</p>
               </div>
             </div>
             <div>
@@ -182,6 +219,7 @@ export default function SettingsPage() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                placeholder="Enter your name"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] outline-none focus:border-[#2563EB]/50"
               />
             </div>
@@ -190,6 +228,7 @@ export default function SettingsPage() {
               <input
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                placeholder="your.email@domain.com"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] outline-none focus:border-[#2563EB]/50"
               />
             </div>
@@ -200,11 +239,23 @@ export default function SettingsPage() {
                 <option>UTC-8 (Pacific Time)</option>
                 <option>UTC+0 (GMT)</option>
                 <option>UTC+1 (CET)</option>
+                <option>UTC+5:30 (India Standard Time)</option>
               </select>
             </div>
-            <Button className="nerve-gradient-blue text-white border-0 rounded-xl font-semibold hover:opacity-90">
-              Save Changes
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={handleSaveProfile}
+                disabled={savingProfile}
+                className="nerve-gradient-blue text-white border-0 rounded-xl font-semibold hover:opacity-90 transition-all"
+              >
+                {savingProfile ? "Saving..." : profileSaved ? "Changes Saved!" : "Save Changes"}
+              </Button>
+              {profileSaved && (
+                <span className="text-xs font-medium text-emerald-600 animate-in fade-in">
+                  Profile updated successfully!
+                </span>
+              )}
+            </div>
           </div>
         )
 

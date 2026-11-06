@@ -33,10 +33,14 @@ const BLOCKS = [
 ]
 
 export default function DashboardPage() {
-  const { projects, goals, tasks, userXp, toggleTaskComplete } = useNerveStore()
+  const { projects, goals, tasks, userXp, toggleTaskComplete, displayName, username } = useNerveStore()
   const [greeting, setGreeting] = useState("Hello")
   const [greetingIcon, setGreetingIcon] = useState<React.ReactNode>(null)
   const [dateStr, setDateStr] = useState("")
+
+  const userGreetingName = useMemo(() => {
+    return displayName?.trim() || username?.trim() || "there"
+  }, [displayName, username])
 
   // Navigation states for the interactive project explorer
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
@@ -112,7 +116,7 @@ export default function DashboardPage() {
             {greetingIcon}
             <p className="text-sm text-[#64748B] font-medium">{dateStr}</p>
           </div>
-          <h1 className="text-3xl font-bold text-[#0F172A] tracking-tight">{greeting}, Alex</h1>
+          <h1 suppressHydrationWarning className="text-3xl font-bold text-[#0F172A] tracking-tight">{greeting}, {userGreetingName}</h1>
           <p className="text-[#64748B] mt-1 text-sm">Here is your plan for focused execution today.</p>
         </div>
       </div>

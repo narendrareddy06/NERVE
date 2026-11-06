@@ -116,10 +116,13 @@ export function NerveSidebar({ isOpen, onClose }: { isOpen?: boolean; onClose?: 
             title="Click to log out"
             className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-50/50 transition-all cursor-pointer group"
           >
-            <div className="w-7 h-7 rounded-full nerve-gradient-blue flex items-center justify-center text-xs font-bold text-white shrink-0 group-hover:from-red-600 group-hover:to-red-700">
+            <div 
+              suppressHydrationWarning
+              className="w-7 h-7 rounded-full nerve-gradient-blue flex items-center justify-center text-xs font-bold text-white shrink-0 group-hover:from-red-600 group-hover:to-red-700"
+            >
               {(displayName || "U")[0].toUpperCase()}
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0" suppressHydrationWarning>
               <p className="text-xs font-bold text-[#0F172A] truncate leading-none mb-0.5">{displayName || "User"}</p>
               <p className="text-[10px] text-[#64748B] truncate">@{username || "user"}</p>
             </div>

@@ -33,10 +33,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Missing userId parameter" }, { status: 400 })
     }
 
-    // 1. Load User Profile Stats (XP & Streak)
+    // 1. Load User Profile Stats (XP & Streak) & Profile Info
     const { data: userProfile } = await supabase
       .from("users")
-      .select("user_xp, streak, notification_settings")
+      .select("user_xp, streak, notification_settings, display_name, username")
       .eq("id", userId)
       .maybeSingle()
 
@@ -119,6 +119,8 @@ export async function GET(request: Request) {
       userXp: userProfile?.user_xp ?? 0,
       streak: userProfile?.streak ?? 0,
       notificationSettings: userProfile?.notification_settings || null,
+      displayName: userProfile?.display_name || null,
+      username: userProfile?.username || null,
       projects,
       goals,
       tasks,
@@ -145,14 +147,19 @@ export async function POST(request: Request) {
 
     const body = await request.json()
 
-    // 1. Update user profile stats (XP & Streak) & settings
+    // 1. Update user profile stats (XP & Streak) & settings & display name
+    const userUpdate: any = {
+      user_xp: body.userXp ?? 0,
+      streak: body.streak ?? 0,
+      notification_settings: body.notificationSettings ?? {},
+    }
+    if (typeof body.displayName === "string") {
+      userUpdate.display_name = body.displayName.trim()
+    }
+
     await supabase
       .from("users")
-      .update({
-        user_xp: body.userXp ?? 0,
-        streak: body.streak ?? 0,
-        notification_settings: body.notificationSettings ?? {},
-      })
+      .update(userUpdate)
       .eq("id", userId)
 
     // 2. Sync projects

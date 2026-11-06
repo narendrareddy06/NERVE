@@ -23,6 +23,7 @@ interface NerveStoreContextType {
   userId: string | null
   username: string | null
   displayName: string | null
+  updateProfile: (displayName: string) => Promise<void>
   pendingMilestone: Milestone | null
   notificationSettings: {
     morningEnabled: boolean
@@ -206,6 +207,18 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
           setMilestones(data.milestones ?? [])
           setUserXp(hydratedXp)
           setStreak(data.streak ?? 0)
+          if (data.displayName) {
+            setDisplayName(data.displayName)
+            if (typeof window !== "undefined") {
+              localStorage.setItem("nerve_display_name", data.displayName)
+            }
+          }
+          if (data.username) {
+            setUsername(data.username)
+            if (typeof window !== "undefined") {
+              localStorage.setItem("nerve_username", data.username)
+            }
+          }
           if (data.notificationSettings) {
             setNotificationSettings(data.notificationSettings)
           }
@@ -610,6 +623,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          displayName,
           projects: nextProjects,
           goals: nextGoals,
           tasks: nextTasks,
@@ -965,6 +979,35 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
     updateStore(tasks, goals, projects, nextRewards, nextXp, streak)
   }
 
+  const updateProfile = async (newDisplayName: string) => {
+    const trimmed = newDisplayName.trim()
+    setDisplayName(trimmed)
+    if (typeof window !== "undefined") {
+      localStorage.setItem("nerve_display_name", trimmed)
+      window.dispatchEvent(new Event("storage"))
+    }
+    if (!userId) return
+    try {
+      await fetch(`/api/store?userId=${userId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: trimmed,
+          projects,
+          goals,
+          tasks,
+          rewards,
+          milestones,
+          userXp,
+          streak,
+          notificationSettings,
+        }),
+      })
+    } catch (e) {
+      console.error("Error updating profile display name:", e)
+    }
+  }
+
   const logout = () => {
     localStorage.removeItem("nerve_user_id")
     localStorage.removeItem("nerve_username")
@@ -990,6 +1033,7 @@ export function NerveStoreProvider({ children }: { children: React.ReactNode }) 
         userId,
         username,
         displayName,
+        updateProfile,
         pendingMilestone,
         notificationSettings,
         clearPendingMilestone: () => setPendingMilestone(null),
